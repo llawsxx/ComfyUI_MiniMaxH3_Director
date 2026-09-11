@@ -428,7 +428,7 @@ function stopPlayer(el) {
 }
 
 function stopAllPlayers(root) {
-    root?.querySelectorAll(".bd-batch-vpreview")?.forEach((wrap) => stopPlayer(wrap));
+    root?.querySelectorAll(".bd-batch-vpreview, .bd-batch-live-preview")?.forEach((wrap) => stopPlayer(wrap));
     pauseActiveR2vMedia(null);
     root?.querySelectorAll("video.bd-r2v-media, audio.bd-r2v-media")?.forEach((m) => {
         try { m.pause(); } catch (_) { /* ignore */ }
@@ -608,11 +608,16 @@ export const IMAGE_BATCH_STYLES = `
 .bd-batch-vpreview-ctrl{display:flex;align-items:center;justify-content:center;gap:6px;flex-shrink:0}
 .bd-batch-vpreview-ctrl button{font-size:10px;padding:2px 8px}
 .bd-batch-vpreview-meta{color:#666;font-size:9px;text-align:center;flex-shrink:0}
-.bd-batch-live-preview{position:relative;width:100%;min-height:160px;flex:1 1 auto;display:flex;align-items:center;justify-content:center;box-sizing:border-box}
+.bd-batch-live-preview{position:relative;width:100%;min-height:160px;flex:1 1 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;box-sizing:border-box}
 .bd-batch-r2v .bd-batch-live-preview{min-height:200px}
 .bd-batch-live-preview img{width:100%;height:auto;max-width:100%;max-height:280px;object-fit:contain;display:block;border-radius:6px}
 .bd-batch-r2v .bd-batch-live-preview img{max-height:280px}
-.bd-batch-live-badge{position:absolute;left:8px;bottom:8px;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#cfcfcf;font-size:10px;pointer-events:none}
+.bd-live-frame-ctrl{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:2px 2px 0;flex-shrink:0}
+.bd-live-frame-ctrl .bd-live-play{background:#222;border:1px solid #444;color:#ddd;border-radius:5px;font-size:10px;padding:2px 7px;cursor:pointer;white-space:nowrap}
+.bd-live-frame-ctrl .bd-live-play:hover{border-color:#4fff8f;color:#4fff8f}
+.bd-live-frame-range{flex:1 1 auto;min-width:0;height:14px;accent-color:#4fff8f;cursor:pointer}
+.bd-live-frame-label{font-size:10px;color:#8aa;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bd-batch-live-badge{position:absolute;left:8px;top:8px;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#cfcfcf;font-size:10px;pointer-events:none}
 @media(max-width:860px){
 .bd-batch-r2v-body,.bd-batch-r2v-foot{grid-template-columns:1fr}
 .bd-batch-r2v .bd-batch-preview{min-height:160px}
@@ -2157,6 +2162,39 @@ function drawFrame(canvas, img) {
     ctx.drawImage(img, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
 }
 
+function _liveFrames(seg) {
+    return (Array.isArray(seg?.previewFrames) && seg.previewFrames.length)
+        ? seg.previewFrames
+        : (seg?.previewB64 ? [seg.previewB64] : []);
+}
+
+function _liveFrameIndex(seg, count) {
+    const n = Math.max(1, Number(count) || 0);
+    const raw = Number(seg?.previewFrameIndex);
+    if (Number.isFinite(raw)) return clamp(Math.round(raw), 0, n - 1);
+    return Math.floor((n - 1) / 2);
+}
+
+function _showLiveFrame(state, seg, index) {
+    const frames = state?.frames || [];
+    if (!frames.length) return;
+    const i = clamp(Math.round(index), 0, frames.length - 1);
+    state.idx = i;
+    seg.previewFrameIndex = i;
+    if (state.img) state.img.src = frameSrc(frames[i], seg.previewMime);
+    if (state.range) state.range.value = String(i);
+    if (state.label) state.label.textContent = t("batch.frameIndex", { i: i + 1, n: frames.length });
+}
+
+function _tickLiveFrame(state, seg) {
+    if (!state.playing || (state.frames?.length || 0) < 2) return;
+    if (state.timer) clearInterval(state.timer);
+    const interval = Math.max(40, 1000 / Math.max(1, Number(seg.previewFps) || 12));
+    state.timer = setInterval(() => {
+        _showLiveFrame(state, seg, (state.idx + 1) % state.frames.length);
+    }, interval);
+}
+
 function mountLivePreview(el, seg, badgeText) {
     stopPlayer(el);
     el.innerHTML = "";
@@ -2165,13 +2203,105 @@ function mountLivePreview(el, seg, badgeText) {
     const img = document.createElement("img");
     img.className = "bd-live-preview";
     img.alt = "live preview";
-    img.src = frameSrc(seg.previewB64, seg.previewMime);
+    const frames = _liveFrames(seg);
+    const state = {
+        playing: seg.previewPlaying !== false,
+        timer: null,
+        idx: _liveFrameIndex(seg, frames.length),
+        frames,
+        img,
+        range: null,
+        label: null,
+    };
+    _players.set(wrap, state);
     const badge = document.createElement("div");
     badge.className = "bd-batch-live-badge";
     badge.textContent = badgeText || t("batch.generating");
     wrap.appendChild(img);
+    if (frames.length > 1) {
+        const ctrl = document.createElement("div");
+        ctrl.className = "bd-live-frame-ctrl";
+        const playBtn = document.createElement("button");
+        playBtn.type = "button";
+        playBtn.className = "bd-live-play";
+        const range = document.createElement("input");
+        range.type = "range";
+        range.className = "bd-live-frame-range";
+        range.min = "0";
+        range.max = String(frames.length - 1);
+        range.step = "1";
+        range.title = t("batch.frameIndex", { i: 1, n: frames.length });
+        const label = document.createElement("span");
+        label.className = "bd-live-frame-label";
+        state.range = range;
+        state.label = label;
+        const syncPlay = () => {
+            playBtn.textContent = state.playing ? t("batch.pause") : t("batch.play");
+            playBtn.title = state.playing ? t("batch.pause") : t("batch.play");
+        };
+        playBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            state.playing = !state.playing;
+            seg.previewPlaying = state.playing;
+            syncPlay();
+            if (state.playing) {
+                _tickLiveFrame(state, seg);
+            } else if (state.timer) {
+                clearInterval(state.timer);
+                state.timer = null;
+            }
+        };
+        range.oninput = (e) => {
+            e.stopPropagation();
+            state.playing = false;
+            seg.previewPlaying = false;
+            syncPlay();
+            if (state.timer) {
+                clearInterval(state.timer);
+                state.timer = null;
+            }
+            _showLiveFrame(state, seg, Number(range.value));
+        };
+        range.onmousedown = (e) => e.stopPropagation();
+        range.onclick = (e) => e.stopPropagation();
+        ctrl.appendChild(playBtn);
+        ctrl.appendChild(range);
+        ctrl.appendChild(label);
+        wrap.appendChild(ctrl);
+        syncPlay();
+    }
     wrap.appendChild(badge);
     el.appendChild(wrap);
+    _showLiveFrame(state, seg, state.idx);
+    _tickLiveFrame(state, seg);
+}
+
+function updateLivePreview(preview, seg, badgeText) {
+    const wrap = preview.querySelector(".bd-batch-live-preview");
+    const state = wrap ? _players.get(wrap) : null;
+    if (!wrap || !state) {
+        mountLivePreview(preview, seg, badgeText);
+        return;
+    }
+    const frames = _liveFrames(seg);
+    state.frames = frames;
+    const badge = preview.querySelector(".bd-batch-live-badge");
+    if (badge) badge.textContent = badgeText || t("batch.generating");
+    const range = preview.querySelector(".bd-live-frame-range");
+    if (!!range !== (frames.length > 1)) {
+        mountLivePreview(preview, seg, badgeText);
+        return;
+    }
+    const hasRange = !!range && frames.length > 1;
+    if (hasRange) {
+        range.max = String(frames.length - 1);
+        state.range = range;
+        _showLiveFrame(state, seg, state.playing ? state.idx : _liveFrameIndex(seg, frames.length));
+    } else {
+        _showLiveFrame(state, seg, state.playing ? state.idx : 0);
+    }
+    if (state.playing) _tickLiveFrame(state, seg);
 }
 
 function mountVideoPreview(el, seg, running, fps, editor) {
@@ -2855,7 +2985,7 @@ export function setImageBatchPreview(editor, segmentIndex, imageB64, extra = {})
     if (Array.isArray(extra.frames) && extra.frames.length) {
         seg.previewFrames = extra.frames;
         seg.previewFps = extra.fps || seg.previewFps || 24;
-        seg.previewLive = false;
+        seg.previewLive = !!extra.live;
     } else if (imageB64) {
         if (extra.live) {
             // Keep final multi-frame playback until a real final payload arrives.
@@ -2879,14 +3009,7 @@ export function setImageBatchPreview(editor, segmentIndex, imageB64, extra = {})
             const badgeText = (step && total)
                 ? t("batch.generatingStep", { step, total })
                 : t("batch.generating");
-            let img = preview.querySelector("img.bd-live-preview");
-            let badge = preview.querySelector(".bd-batch-live-badge");
-            if (!img) {
-                mountLivePreview(preview, seg, badgeText);
-            } else {
-                img.src = frameSrc(imageB64, extra.mime || seg.previewMime);
-                if (badge) badge.textContent = badgeText;
-            }
+            updateLivePreview(preview, seg, badgeText);
             const pickThumb = editor.batchPicker?.querySelector?.(`.bd-batch-pick[data-batch-index="${segmentIndex}"] img.bd-batch-pick-thumb`);
             if (pickThumb) pickThumb.src = frameSrc(imageB64, extra.mime || seg.previewMime);
             return;

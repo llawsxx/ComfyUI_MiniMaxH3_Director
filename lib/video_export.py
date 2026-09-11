@@ -138,12 +138,12 @@ def write_frames_to_mp4(
             "-preset",
             "veryfast",
             "-crf",
-            "18",
+            "5",
             "-movflags",
             "+faststart",
         ]
         if has_audio:
-            cmd += ["-c:a", "aac", "-b:a", "192k", "-shortest"]
+            cmd += ["-c:a", "aac", "-b:a", "1M", "-shortest"]
         else:
             cmd += ["-an"]
         cmd.append(str(tmp_mp4))

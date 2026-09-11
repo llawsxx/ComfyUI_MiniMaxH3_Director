@@ -1049,29 +1049,33 @@ def execute_director_plan_core(
             )
 
         def _report_step_preview(step: int, total_steps: int, x0) -> None:
-            # Live clip for the batch-card / 采样预览 slot (KJNodes-style looping WebP).
+            # Per-frame payload so the card / 采样预览 slot can scrub frames
+            # (the browser animates the selected temporal frames client-side).
             try:
                 from .tae_preview import (
                     LIVE_PREVIEW_FPS,
                     LIVE_PREVIEW_MAX_FRAMES,
-                    encode_preview_payload,
+                    LIVE_PREVIEW_QUALITY,
+                    encode_preview_frames_payload,
                     x0_to_preview_frames,
                 )
 
                 frames = x0_to_preview_frames(x0, max_frames=LIVE_PREVIEW_MAX_FRAMES, max_side=512)
                 if not frames:
                     return
-                image_b64, mime, width, height = encode_preview_payload(
-                    frames, fps=LIVE_PREVIEW_FPS
+                frame_b64s, mime, width, height = encode_preview_frames_payload(
+                    frames, quality=LIVE_PREVIEW_QUALITY
                 )
-                if not image_b64:
+                if not frame_b64s:
                     return
+                still = frame_b64s[len(frame_b64s) // 2]
                 report_director_segment_preview(
                     node_id,
                     segment_index=ui_idx,
-                    image_b64=image_b64,
+                    image_b64=still,
                     width=width,
                     height=height,
+                    frames=frame_b64s,
                     live=True,
                     step=step + 1,
                     total_steps=total_steps,

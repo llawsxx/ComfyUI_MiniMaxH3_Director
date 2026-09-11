@@ -142,6 +142,8 @@ def _video_latent_from_x0(x0: Any) -> torch.Tensor | None:
 # Match KJNodes ModelPreviewOverride defaults for animated step previews.
 LIVE_PREVIEW_MAX_FRAMES = 16
 LIVE_PREVIEW_FPS = 12
+# JPEG quality for the per-frame selector payload (sent every sampled step).
+LIVE_PREVIEW_QUALITY = 72
 
 
 def _pick_temporal_indices(t_total: int, max_frames: int) -> list[int]:
@@ -284,3 +286,19 @@ def encode_preview_payload(
         mid = frames[len(frames) // 2]
         return pil_to_jpeg_b64(mid, quality=quality), "image/jpeg", mid.width, mid.height
     return b64, "image/webp", first.width, first.height
+
+
+def encode_preview_frames_payload(
+    frames: list[Image.Image],
+    *,
+    quality: int = LIVE_PREVIEW_QUALITY,
+) -> tuple[list[str], str, int, int]:
+    """Encode each frame as a standalone JPEG so the UI can pick one.
+
+    Returns ``(frames_b64, mime, width, height)``. The browser animates and/or
+    scrubs client-side, so the backend keeps every sampled temporal frame.
+    """
+    if not frames:
+        return [], "image/jpeg", 0, 0
+    b64 = [pil_to_jpeg_b64(frame, quality=quality) for frame in frames]
+    return b64, "image/jpeg", frames[0].width, frames[0].height

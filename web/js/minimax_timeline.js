@@ -1080,6 +1080,13 @@ const STYLES = `
 .bd-live-sample-empty.hidden{display:none!important}
 .bd-live-sample-badge{position:absolute;left:10px;bottom:10px;padding:3px 8px;border-radius:999px;background:rgba(0,0,0,.75);color:#cfcfcf;font-size:11px;pointer-events:none}
 .bd-live-sample-badge.hidden{display:none!important}
+.bd-live-sample-ctrl{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.bd-live-sample-ctrl.hidden{display:none!important}
+.bd-live-sample-play{background:#222;border:1px solid #444;color:#ddd;border-radius:6px;font-size:11px;padding:3px 10px;cursor:pointer;white-space:nowrap}
+.bd-live-sample-play:hover{border-color:#4fff8f;color:#4fff8f}
+.bd-live-sample-play.hidden{display:none!important}
+.bd-live-sample-range{flex:1 1 auto;min-width:0;height:16px;accent-color:#4fff8f;cursor:pointer}
+.bd-live-sample-frame{font-size:11px;color:#8aa;font-variant-numeric:tabular-nums;white-space:nowrap}
 .bd-main>.bd-live-sample{margin:0 0 4px}
 .bd-run-select-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:#aaa}
 .bd-run-select-all-wrap{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#aaa;cursor:pointer;user-select:none;margin-left:2px}
@@ -2933,6 +2940,11 @@ class MiniMaxH3DirectorEditor {
                 <img class="hidden" data-r="live-sample-img" alt="live preview">
                 <div class="bd-live-sample-empty" data-r="live-sample-empty" data-i18n="liveSample.waiting">等待采样…</div>
                 <div class="bd-live-sample-badge hidden" data-r="live-sample-badge"></div>
+            </div>
+            <div class="bd-live-sample-ctrl hidden" data-r="live-sample-ctrl">
+                <button type="button" class="bd-live-sample-play" data-r="live-sample-play"></button>
+                <input type="range" class="bd-live-sample-range" data-r="live-sample-range" min="0" max="0" value="0" step="1">
+                <span class="bd-live-sample-frame" data-r="live-sample-frame"></span>
             </div>`;
         this.mainBody.appendChild(liveSample);
         this.liveSampleEl = liveSample;
@@ -2940,7 +2952,29 @@ class MiniMaxH3DirectorEditor {
         this.liveSampleEmpty = liveSample.querySelector('[data-r="live-sample-empty"]');
         this.liveSampleBadge = liveSample.querySelector('[data-r="live-sample-badge"]');
         this.liveSampleMeta = liveSample.querySelector('[data-r="live-sample-meta"]');
+        this.liveSampleCtrl = liveSample.querySelector('[data-r="live-sample-ctrl"]');
+        this.liveSamplePlay = liveSample.querySelector('[data-r="live-sample-play"]');
+        this.liveSampleRange = liveSample.querySelector('[data-r="live-sample-range"]');
+        this.liveSampleFrameLabel = liveSample.querySelector('[data-r="live-sample-frame"]');
         this._liveSampleHost = "main";
+        this._liveSampleFrames = [];
+        this._liveSampleIndex = null;
+        this._liveSamplePlaying = true;
+        this._liveSampleTimer = null;
+        this.liveSamplePlay?.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this._liveSamplePlaying = !this._liveSamplePlaying;
+            this._syncLiveSamplePlayButton();
+            if (this._liveSamplePlaying) this._tickLiveSample();
+            else this._stopLiveSampleTimer();
+        });
+        this.liveSampleRange?.addEventListener("input", (e) => {
+            e.stopPropagation();
+            this._liveSamplePlaying = false;
+            this._syncLiveSamplePlayButton();
+            this._stopLiveSampleTimer();
+            this._showLiveSampleFrame(Number(this.liveSampleRange.value));
+        });
 
         const bottom = document.createElement("div");
         bottom.className = "bd-split";
@@ -11596,21 +11630,74 @@ class MiniMaxH3DirectorEditor {
         panel.classList.toggle("hidden", !show);
         if (!show) {
             panel.classList.remove("receiving");
+            this._stopLiveSampleTimer();
             return;
         }
         if (!this._liveSampleB64) {
             this.liveSampleImg?.classList.add("hidden");
             this.liveSampleEmpty?.classList.remove("hidden");
             this.liveSampleBadge?.classList.add("hidden");
+            this.liveSampleCtrl?.classList.add("hidden");
             if (this.liveSampleMeta) this.liveSampleMeta.textContent = t("liveSample.idleHint");
         }
     }
 
+    _stopLiveSampleTimer() {
+        if (this._liveSampleTimer) {
+            clearInterval(this._liveSampleTimer);
+            this._liveSampleTimer = null;
+        }
+    }
+
+    _syncLiveSamplePlayButton() {
+        const btn = this.liveSamplePlay;
+        if (!btn) return;
+        const multi = (this._liveSampleFrames?.length || 0) > 1;
+        btn.classList.toggle("hidden", !multi);
+        btn.textContent = this._liveSamplePlaying ? t("batch.pause") : t("batch.play");
+        btn.title = this._liveSamplePlaying ? t("batch.pause") : t("batch.play");
+    }
+
+    _showLiveSampleFrame(index) {
+        const frames = this._liveSampleFrames || [];
+        if (!frames.length) return;
+        const i = clamp(Math.round(Number(index) || 0), 0, frames.length - 1);
+        this._liveSampleIndex = i;
+        this._liveSampleB64 = frames[i];
+        const mime = this._liveSampleMime || "image/jpeg";
+        if (this.liveSampleImg) {
+            this.liveSampleImg.src = String(frames[i]).startsWith("data:")
+                ? frames[i]
+                : `data:${mime};base64,${frames[i]}`;
+            this.liveSampleImg.classList.remove("hidden");
+        }
+        if (this.liveSampleRange) {
+            this.liveSampleRange.max = String(frames.length - 1);
+            this.liveSampleRange.value = String(i);
+        }
+        if (this.liveSampleFrameLabel) {
+            this.liveSampleFrameLabel.textContent = t("batch.frameIndex", { i: i + 1, n: frames.length });
+        }
+    }
+
+    _tickLiveSample() {
+        this._stopLiveSampleTimer();
+        const frames = this._liveSampleFrames || [];
+        if (!this._liveSamplePlaying || frames.length < 2) return;
+        const interval = Math.max(40, 1000 / Math.max(1, Number(this._liveSampleFps) || 12));
+        this._liveSampleTimer = setInterval(() => {
+            this._showLiveSampleFrame((Number(this._liveSampleIndex) + 1) % frames.length);
+        }, interval);
+    }
+
     clearLiveSamplePreview() {
+        this._stopLiveSampleTimer();
         this._liveSampleB64 = "";
         this._liveSampleStep = null;
         this._liveSampleTotal = null;
         this._liveSampleSeg = null;
+        this._liveSampleFrames = [];
+        this._liveSampleIndex = null;
         this.liveSampleEl?.classList.remove("receiving");
         if (this.liveSampleImg) {
             this.liveSampleImg.removeAttribute("src");
@@ -11618,26 +11705,36 @@ class MiniMaxH3DirectorEditor {
         }
         this.liveSampleEmpty?.classList.remove("hidden");
         this.liveSampleBadge?.classList.add("hidden");
+        this.liveSampleCtrl?.classList.add("hidden");
         if (this.liveSampleMeta) this.liveSampleMeta.textContent = t("liveSample.idleHint");
     }
 
     setLiveSamplePreview(detail = {}) {
         if (!this.needsLiveSamplePanel()) return;
         const b64 = detail.image_b64 || detail.imageB64 || "";
-        if (!b64) return;
+        const incoming = Array.isArray(detail.frames) && detail.frames.length
+            ? detail.frames
+            : (b64 ? [b64] : []);
+        if (!incoming.length) return;
         this._placeLiveSamplePanel();
         this.liveSampleEl?.classList.remove("hidden");
-        this._liveSampleB64 = b64;
+        this._liveSampleFrames = incoming;
+        if (typeof detail.mime === "string" && detail.mime) this._liveSampleMime = detail.mime;
+        if (Number.isFinite(Number(detail.fps)) && Number(detail.fps) > 0) {
+            this._liveSampleFps = Number(detail.fps);
+        }
         this._liveSampleStep = detail.step ?? null;
         this._liveSampleTotal = detail.total_steps ?? detail.totalSteps ?? null;
         this._liveSampleSeg = detail.segment_index ?? detail.segmentIndex ?? null;
 
-        const mime = (typeof detail.mime === "string" && detail.mime) ? detail.mime : "image/jpeg";
-        const src = b64.startsWith("data:") ? b64 : `data:${mime};base64,${b64}`;
-        if (this.liveSampleImg) {
-            this.liveSampleImg.src = src;
-            this.liveSampleImg.classList.remove("hidden");
-        }
+        const stored = Number(this._liveSampleIndex);
+        const index = Number.isFinite(stored)
+            ? clamp(Math.round(stored), 0, incoming.length - 1)
+            : Math.floor((incoming.length - 1) / 2);
+        const multi = incoming.length > 1;
+        this.liveSampleCtrl?.classList.toggle("hidden", !multi);
+        this._showLiveSampleFrame(index);
+        this._syncLiveSamplePlayButton();
         this.liveSampleEmpty?.classList.add("hidden");
         this.liveSampleEl?.classList.toggle("receiving", !!detail.live);
 
@@ -11660,6 +11757,7 @@ class MiniMaxH3DirectorEditor {
                 ? (segLabel || t("liveSample.sampling"))
                 : (segLabel || t("liveSample.done"));
         }
+        if (this._liveSamplePlaying) this._tickLiveSample();
     }
 
     /** Keep timeline / 素材组 selection on the segment the run is currently on. */
@@ -12611,7 +12709,7 @@ app.registerExtension({
                     detail?.segment_index ?? 0,
                     detail?.image_b64 || "",
                     {
-                        frames: detail?.live ? undefined : detail?.frames,
+                        frames: detail?.frames,
                         fps: detail?.fps,
                         live: !!detail?.live,
                         step: detail?.step,
