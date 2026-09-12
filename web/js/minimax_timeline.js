@@ -171,6 +171,18 @@ function isContinuityKeepTail(output) {
     return true;
 }
 
+function isContinuityGradeAlign(output) {
+    if (!output) return false;
+    const raw = output.continuityGradeAlign ?? output.continuity_grade_align;
+    if (raw === true || raw === 1) return true;
+    if (raw === false || raw === 0) return false;
+    if (typeof raw === "string") {
+        const s = raw.trim().toLowerCase();
+        return s === "true" || s === "1" || s === "yes" || s === "on";
+    }
+    return false;
+}
+
 /** Whether段间引导 controls apply for the current task + segment count. */
 function isContinuityEligible(editor) {
     if (!editor) return false;
@@ -249,6 +261,7 @@ function normalizeOutputContinuity(output = {}) {
             output.continuityRedraw ?? output.continuity_redraw ?? DEFAULT_CONTINUITY_REDRAW,
         ),
         continuityKeepTail: isContinuityKeepTail(output),
+        continuityGradeAlign: isContinuityGradeAlign(output),
         audioMode: normalizeAudioMode(output.audioMode ?? output.audio_mode),
         refImageSize: normalizeRefImageSize(output.refImageSize ?? output.ref_image_size),
     };
@@ -1900,6 +1913,7 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityMode: DEFAULT_CONTINUITY_MODE,
             continuityRedraw: DEFAULT_CONTINUITY_REDRAW,
             continuityKeepTail: true,
+            continuityGradeAlign: false,
         },
         runSelectEnabled: false,
         runSelection: [],
@@ -1969,6 +1983,7 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityMode: data.output?.continuityMode ?? data.output?.continuity_mode,
             continuityRedraw: data.output?.continuityRedraw ?? data.output?.continuity_redraw,
             continuityKeepTail: data.output?.continuityKeepTail ?? data.output?.continuity_keep_tail,
+            continuityGradeAlign: data.output?.continuityGradeAlign ?? data.output?.continuity_grade_align,
         });
         // Infer aspectRatio from saved width/height when older payloads omitted the label.
         if (!data.output.aspectRatio && data.output.width > 0 && data.output.height > 0) {
@@ -2923,6 +2938,10 @@ class MiniMaxH3DirectorEditor {
                     <input type="checkbox" data-r="segment-continuity-keep-tail" checked>
                     <span data-i18n="output.continuityKeepTail">保完整</span>
                 </label>
+                <label data-r="segment-continuity-grade-align-wrap" hidden data-i18n-title="tooltip.continuityGradeAlign">
+                    <input type="checkbox" data-r="segment-continuity-grade-align">
+                    <span data-i18n="output.continuityGradeAlign">段首光色对齐</span>
+                </label>
             </span>
             <button type="button" class="bd-btn bd-btn-live-preview" data-a="live-tae-preview" data-i18n="toolbar.liveTaePreview" data-i18n-title="tooltip.liveTaePreview">实时预览</button>`;
         this.mainBody.appendChild(outputBar);
@@ -3264,6 +3283,8 @@ class MiniMaxH3DirectorEditor {
         this.segmentContinuityRedraw = this.root.querySelector('[data-r="segment-continuity-redraw"]');
         this.segmentContinuityKeepTailWrap = this.root.querySelector('[data-r="segment-continuity-keep-tail-wrap"]');
         this.segmentContinuityKeepTail = this.root.querySelector('[data-r="segment-continuity-keep-tail"]');
+        this.segmentContinuityGradeAlignWrap = this.root.querySelector('[data-r="segment-continuity-grade-align-wrap"]');
+        this.segmentContinuityGradeAlign = this.root.querySelector('[data-r="segment-continuity-grade-align"]');
         this.outPreview = this.root.querySelector('[data-r="out-preview"]');
         this.runStatusEl = this.root.querySelector('[data-r="run-status"]');
         this.runTitleEl = this.root.querySelector('[data-r="run-title"]');
@@ -3580,6 +3601,11 @@ class MiniMaxH3DirectorEditor {
         if (this.segmentContinuityKeepTail) {
             this.segmentContinuityKeepTail.onchange = () => {
                 this.onOutputField("continuityKeepTail", this.segmentContinuityKeepTail.checked);
+            };
+        }
+        if (this.segmentContinuityGradeAlign) {
+            this.segmentContinuityGradeAlign.onchange = () => {
+                this.onOutputField("continuityGradeAlign", this.segmentContinuityGradeAlign.checked);
             };
         }
         if (this.segContinuityFromPrevCb) {
@@ -6155,6 +6181,7 @@ class MiniMaxH3DirectorEditor {
             continuityMode: DEFAULT_CONTINUITY_MODE,
             continuityRedraw: DEFAULT_CONTINUITY_REDRAW,
             continuityKeepTail: true,
+            continuityGradeAlign: false,
         };
         // Prefer ResolutionSelector fields; backfill from width/height when missing.
         // Custom keeps explicit width/height and does not recompute from megapixels.
@@ -6214,6 +6241,9 @@ class MiniMaxH3DirectorEditor {
         }
         if (this.segmentContinuityKeepTail) {
             this.segmentContinuityKeepTail.checked = isContinuityKeepTail(out);
+        }
+        if (this.segmentContinuityGradeAlign) {
+            this.segmentContinuityGradeAlign.checked = isContinuityGradeAlign(out);
         }
         this.syncFrameRateUI(this.timeline.frameRate);
         this.updateOutputModeUI();
@@ -6292,6 +6322,16 @@ class MiniMaxH3DirectorEditor {
             const keepTail = isContinuityKeepTail(this.timeline.output);
             this.segmentContinuityKeepTail.checked = keepTail;
             this.timeline.output.continuityKeepTail = keepTail;
+        }
+        if (this.segmentContinuityGradeAlignWrap) {
+            this.segmentContinuityGradeAlignWrap.hidden = !masterOn;
+            this.segmentContinuityGradeAlignWrap.setAttribute("aria-hidden", masterOn ? "false" : "true");
+            this.segmentContinuityGradeAlignWrap.title = masterOn ? t("tooltip.continuityGradeAlign") : "";
+        }
+        if (this.segmentContinuityGradeAlign && this.timeline?.output) {
+            const gradeAlign = isContinuityGradeAlign(this.timeline.output);
+            this.segmentContinuityGradeAlign.checked = gradeAlign;
+            this.timeline.output.continuityGradeAlign = gradeAlign;
         }
         this.syncSegmentContinuityFromPrevUI();
         this.syncSegmentRefImageSizeUI();
@@ -6523,6 +6563,7 @@ class MiniMaxH3DirectorEditor {
             continuityMode: DEFAULT_CONTINUITY_MODE,
             continuityRedraw: DEFAULT_CONTINUITY_REDRAW,
             continuityKeepTail: true,
+            continuityGradeAlign: false,
         };
         if (key === "aspectRatio") {
             if (isCustomAspectRatio(value)) {
@@ -6581,6 +6622,8 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.continuityRedraw = snapContinuityRedraw(value);
         } else if (key === "continuityKeepTail") {
             this.timeline.output.continuityKeepTail = !!value;
+        } else if (key === "continuityGradeAlign") {
+            this.timeline.output.continuityGradeAlign = !!value;
         }
         this.syncOutputUIFromTimeline();
         if (this.isFl2vMode()) updateFl2vDetailUI(this);
@@ -6667,6 +6710,7 @@ class MiniMaxH3DirectorEditor {
                 prevOut.continuityRedraw ?? prevOut.continuity_redraw ?? DEFAULT_CONTINUITY_REDRAW,
             ),
             continuityKeepTail: isContinuityKeepTail(prevOut),
+            continuityGradeAlign: isContinuityGradeAlign(prevOut),
         };
         if (this.widthWidget) this.widthWidget.value = resolved.width;
         if (this.heightWidget) this.heightWidget.value = resolved.height;
@@ -6699,6 +6743,7 @@ class MiniMaxH3DirectorEditor {
             continuityMode: DEFAULT_CONTINUITY_MODE,
             continuityRedraw: DEFAULT_CONTINUITY_REDRAW,
             continuityKeepTail: true,
+            continuityGradeAlign: false,
         };
         if (this.timeline.output.audioMode == null) {
             this.timeline.output.audioMode = "generate";
@@ -6755,6 +6800,11 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.continuityKeepTail = !!this.segmentContinuityKeepTail.checked;
         } else {
             this.timeline.output.continuityKeepTail = isContinuityKeepTail(this.timeline.output);
+        }
+        if (continuityEligible && this.segmentContinuityGradeAlign) {
+            this.timeline.output.continuityGradeAlign = !!this.segmentContinuityGradeAlign.checked;
+        } else {
+            this.timeline.output.continuityGradeAlign = isContinuityGradeAlign(this.timeline.output);
         }
         this.syncOutputToWidgets();
     }

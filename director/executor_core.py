@@ -1322,7 +1322,12 @@ def execute_director_plan_core(
                 pre_chunk = pre_chunk.float()
         else:
             pre_chunk = chunk
-        if trim_frames > 0 and prev_idx >= 0 and is_continuity_active(plan, seg):
+        if (
+            trim_frames > 0
+            and prev_idx >= 0
+            and is_continuity_active(plan, seg)
+            and bool(getattr(plan, "continuity_grade_align", False))
+        ):
             prev_export = completed_outputs.get(prev_idx)
             if prev_export is not None and int(prev_export.shape[0]) >= 1:
                 same_pre = pre_chunk is chunk

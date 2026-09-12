@@ -734,6 +734,7 @@ def build_fl2v_director_plan(
     raw["totalFrames"] = timeline_total
 
     from .segment_continuity import (
+        resolve_continuity_grade_align,
         resolve_continuity_keep_tail,
         resolve_continuity_mode,
         resolve_continuity_redraw,
@@ -746,6 +747,7 @@ def build_fl2v_director_plan(
     continuity_mode = resolve_continuity_mode(timeline)
     continuity_redraw = resolve_continuity_redraw(timeline)
     continuity_keep_tail = resolve_continuity_keep_tail(timeline)
+    continuity_grade_align = resolve_continuity_grade_align(timeline)
     run_indices = (
         frozenset(selected_plan_indices) if run_sel is not None else None
     )
@@ -774,4 +776,5 @@ def build_fl2v_director_plan(
         continuity_mode=continuity_mode,
         continuity_redraw=continuity_redraw,
         continuity_keep_tail=continuity_keep_tail,
+        continuity_grade_align=continuity_grade_align,
     )

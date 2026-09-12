@@ -180,6 +180,27 @@ def resolve_continuity_keep_tail(timeline: dict | None) -> bool:
     return True
 
 
+def resolve_continuity_grade_align(timeline: dict | None) -> bool:
+    """Pull each segment opening's low-freq grade toward the previous tail.
+
+    UI「段首光色对齐」. Off by default: the pull is a broad low-frequency
+    residual and at high weight reads as an opening ghost / 拖影.
+    """
+    output = (timeline or {}).get("output") if isinstance(timeline, dict) else None
+    if not isinstance(output, dict):
+        return False
+    raw = output.get("continuityGradeAlign")
+    if raw is None:
+        raw = output.get("continuity_grade_align")
+    if raw is None:
+        return False
+    if raw is True or raw == 1:
+        return True
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"true", "1", "yes", "on"}
+    return False
+
+
 def is_continue_mode(plan) -> bool:
     """True when master continuity is on and strategy is latent continue."""
     if plan is None or not getattr(plan, "continuity_enabled", False):

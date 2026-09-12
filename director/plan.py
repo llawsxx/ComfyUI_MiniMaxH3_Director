@@ -285,6 +285,8 @@ class DirectorPlan:
     continuity_redraw: float = 0.10
     # Keep sample-trim remainder (~12f) instead of cropping back to UI length.
     continuity_keep_tail: bool = True
+    # Pull each segment opening low-freq grade toward the previous tail (default off).
+    continuity_grade_align: bool = False
     global_ref_audios: list[SegmentRefAudio] = field(default_factory=list)
     # Full source-video PCM, reused only during this one Director execution and
     # freed when the run ends (replaces the old never-cleared process cache).
@@ -921,6 +923,7 @@ def build_director_plan(
         )
 
     from .segment_continuity import (
+        resolve_continuity_grade_align,
         resolve_continuity_keep_tail,
         resolve_continuity_mode,
         resolve_continuity_redraw,
@@ -934,6 +937,7 @@ def build_director_plan(
     continuity_mode = resolve_continuity_mode(timeline)
     continuity_redraw = resolve_continuity_redraw(timeline)
     continuity_keep_tail = resolve_continuity_keep_tail(timeline)
+    continuity_grade_align = resolve_continuity_grade_align(timeline)
     for seg, (_start, _end, seg_data) in zip(segments, segment_ranges):
         seg.continuity_from_prev = resolve_segment_continuity_from_prev(
             seg_data if isinstance(seg_data, dict) else {},
@@ -968,6 +972,7 @@ def build_director_plan(
         continuity_mode=continuity_mode,
         continuity_redraw=continuity_redraw,
         continuity_keep_tail=continuity_keep_tail,
+        continuity_grade_align=continuity_grade_align,
         global_ref_audios=global_ref_audios,
     )
 

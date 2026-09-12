@@ -172,6 +172,8 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
     }
     if plan.continuity_enabled and bool(getattr(plan, "continuity_keep_tail", True)):
         payload["continuity_keep_tail"] = True
+    if plan.continuity_enabled and bool(getattr(plan, "continuity_grade_align", False)):
+        payload["continuity_grade_align"] = True
     return payload
 
 

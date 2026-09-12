@@ -325,6 +325,7 @@ function renderCacheStatus(node, data, kind = "normal") {
         continuity_mode: "引导方式",
         continuity_redraw: "重绘幅度",
         continuity_keep_tail: "保完整",
+        continuity_grade_align: "段首光色对齐",
         cfg: "CFG",
         steps: "一采步数",
         sampler: "一采采样器",
