@@ -422,6 +422,23 @@ def execute_director_plan_core(
     # When off: skip step TAE and the post-sample full-segment JPEG playback encode.
     raw_live = (plan.raw or {}).get("liveTaePreview", (plan.raw or {}).get("live_tae_preview", False))
     live_tae_preview = raw_live in (True, 1, "1", "true", "True", "on")
+    # Optional audio preview: decode the AV latent's audio stream every N steps.
+    raw_live_audio = (plan.raw or {}).get(
+        "liveAudioPreview", (plan.raw or {}).get("live_audio_preview", False)
+    )
+    live_audio_preview = raw_live_audio in (True, 1, "1", "true", "True", "on")
+    try:
+        audio_preview_every = int(
+            (plan.raw or {}).get(
+                "liveAudioPreviewEvery",
+                (plan.raw or {}).get("live_audio_preview_every", 5),
+            )
+            or 5
+        )
+    except (TypeError, ValueError):
+        audio_preview_every = 5
+    audio_preview_every = max(1, min(50, audio_preview_every))
+    live_preview_any = live_tae_preview or live_audio_preview
 
     all_segments = plan.segments
     # Drop caches for deleted/shortened timelines. Use every segment index (not
@@ -476,6 +493,10 @@ def execute_director_plan_core(
         reports.append("Live preview: ON — 采样中 TAE 动态预览（成片看下游 CreateVideo / SaveVideo）。")
     else:
         reports.append("Live preview: OFF — 跳过采样预览。")
+    if live_audio_preview:
+        reports.append(
+            f"Audio preview: ON — 每 {audio_preview_every} 步解码一次音频流（audio VAE，会增加采样耗时）。"
+        )
     if clear_vram_between_segments:
         reports.append("VRAM: 段间清理显存已开启（最后一段不清理）。")
     if audio_mode == AUDIO_MODE_MUTE:
@@ -1060,38 +1081,109 @@ def execute_director_plan_core(
             )
 
         def _report_step_preview(step: int, total_steps: int, x0) -> None:
-            # Per-frame payload so the card / 采样预览 slot can scrub frames
-            # (the browser animates the selected temporal frames client-side).
+            # Per-frame video payload (scrubbable client-side) and/or a decoded
+            # audio clip. Audio is throttled to every N steps (audio VAE is heavy).
             try:
-                from .tae_preview import (
-                    LIVE_PREVIEW_FPS,
-                    LIVE_PREVIEW_MAX_FRAMES,
-                    LIVE_PREVIEW_QUALITY,
-                    encode_preview_frames_payload,
-                    x0_to_preview_frames,
-                )
+                image_b64 = ""
+                frame_kwargs: dict[str, Any] = {}
+                if live_tae_preview:
+                    from .tae_preview import (
+                        LIVE_PREVIEW_FPS,
+                        LIVE_PREVIEW_MAX_FRAMES,
+                        LIVE_PREVIEW_QUALITY,
+                        encode_preview_frames_payload,
+                        x0_to_preview_frames,
+                    )
 
-                frames = x0_to_preview_frames(x0, max_frames=LIVE_PREVIEW_MAX_FRAMES, max_side=512)
-                if not frames:
+                    frames = x0_to_preview_frames(
+                        x0, max_frames=LIVE_PREVIEW_MAX_FRAMES, max_side=512
+                    )
+                    if frames:
+                        frame_b64s, mime, width, height = encode_preview_frames_payload(
+                            frames, quality=LIVE_PREVIEW_QUALITY
+                        )
+                        if frame_b64s:
+                            image_b64 = frame_b64s[len(frame_b64s) // 2]
+                            frame_kwargs = dict(
+                                width=width,
+                                height=height,
+                                frames=frame_b64s,
+                                mime=mime,
+                                fps=float(LIVE_PREVIEW_FPS),
+                            )
+
+                audio_b64 = ""
+                if live_audio_preview and audio_vae is not None:
+                    last = max(0, int(total_steps) - 1)
+                    if step >= last or step % audio_preview_every == 0:
+                        try:
+                            from .tae_preview import encode_wav_b64
+                            from comfy.nested_tensor import NestedTensor
+                            try:
+                                from comfy_extras.nodes_audio import VAEDecodeAudio
+                            except ImportError:
+                                from comfy_extras.nodes_lt import VAEDecodeAudio
+
+                            # The sampler carries audio scaled onto the video
+                            # schedule (ModelSamplingAV.audio_scale); x0 hands
+                            # back that model-space view. Unscale before VAE decode
+                            # or the waveform is garbage/noise.
+                            try:
+                                audio_scale = float(shift_video) / float(shift_audio)
+                            except (TypeError, ValueError, ZeroDivisionError):
+                                audio_scale = 1.0
+
+                            latent_source = x0
+                            if isinstance(latent_source, dict) and "samples" in latent_source:
+                                latent_source = latent_source["samples"]
+                            audio_stream = None
+                            if hasattr(latent_source, "unbind") and not isinstance(
+                                latent_source, torch.Tensor
+                            ):
+                                streams = list(latent_source.unbind())
+                                if len(streams) >= 2 and torch.is_tensor(streams[-1]):
+                                    audio_stream = streams[-1]
+                            if audio_stream is not None:
+                                if abs(audio_scale - 1.0) > 1e-6:
+                                    audio_stream = audio_stream / audio_scale
+                                audio_out = VAEDecodeAudio.execute(
+                                    audio_vae,
+                                    {"samples": NestedTensor((audio_stream,))},
+                                )
+                                audio = _unpack_node_output(audio_out)[0]
+                                if isinstance(audio, dict):
+                                    waveform = audio.get("waveform")
+                                    audio_sr = int(audio.get("sample_rate") or 32000)
+                                    # Drop the continuity pinned prefix so the
+                                    # preview matches the exported segment.
+                                    if (
+                                        trim_frames > 0
+                                        and isinstance(waveform, torch.Tensor)
+                                        and waveform.numel() > 0
+                                    ):
+                                        skip = int(round(
+                                            float(trim_frames)
+                                            / max(1.0, float(plan.frame_rate or 24))
+                                            * audio_sr
+                                        ))
+                                        if skip > 0 and int(waveform.shape[-1]) > skip:
+                                            waveform = waveform[..., skip:]
+                                    audio_b64 = encode_wav_b64(waveform, audio_sr)
+                        except Exception as exc:
+                            log.warning("Live audio preview decode skipped: %s", exc)
+
+                if not image_b64 and not audio_b64:
                     return
-                frame_b64s, mime, width, height = encode_preview_frames_payload(
-                    frames, quality=LIVE_PREVIEW_QUALITY
-                )
-                if not frame_b64s:
-                    return
-                still = frame_b64s[len(frame_b64s) // 2]
                 report_director_segment_preview(
                     node_id,
                     segment_index=ui_idx,
-                    image_b64=still,
-                    width=width,
-                    height=height,
-                    frames=frame_b64s,
+                    image_b64=image_b64,
                     live=True,
                     step=step + 1,
                     total_steps=total_steps,
-                    mime=mime,
-                    fps=float(LIVE_PREVIEW_FPS),
+                    audio_b64=audio_b64,
+                    audio_mime="audio/wav",
+                    **frame_kwargs,
                 )
             except Exception as exc:
                 log.debug("Live TAE preview skipped: %s", exc)
@@ -1123,7 +1215,7 @@ def execute_director_plan_core(
                 shift_audio=shift_audio,
                 sigmas=first_pass_sigmas,
                 on_phase=_report_sample_phase,
-                on_step_preview=_report_step_preview if live_tae_preview else None,
+                on_step_preview=_report_step_preview if live_preview_any else None,
                 preview_every=1,
                 after_shift=after_shift,
             )
@@ -1251,7 +1343,7 @@ def execute_director_plan_core(
                 shift_video=shift_video,
                 shift_audio=shift_audio,
                 on_phase=_report_sample_phase,
-                on_step_preview=_report_step_preview if live_tae_preview else None,
+                on_step_preview=_report_step_preview if live_preview_any else None,
                 first_pass_images=upscale_frames,
                 trim_frames=trim_frames,
                 on_pass=_export_refine_pass if mp4_run_dir is not None else None,

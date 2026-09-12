@@ -123,8 +123,10 @@ def report_director_segment_preview(
     step: int | None = None,
     total_steps: int | None = None,
     mime: str | None = None,
+    audio_b64: str | None = None,
+    audio_mime: str | None = None,
 ) -> None:
-    if not node_id or not image_b64:
+    if not node_id or (not image_b64 and not audio_b64):
         return
     payload = {
         "node_id": str(node_id),
@@ -141,6 +143,9 @@ def report_director_segment_preview(
         payload["fps"] = fps
     elif fps and mime in ("image/webp", "video/mp4"):
         payload["fps"] = fps
+    if audio_b64:
+        payload["audio_b64"] = str(audio_b64)
+        payload["audio_mime"] = str(audio_mime or "audio/wav")
     if step is not None:
         payload["step"] = int(step)
     if total_steps is not None:

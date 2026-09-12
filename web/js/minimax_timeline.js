@@ -1080,6 +1080,11 @@ const STYLES = `
 .bd-output .bd-btn-live-preview{margin-left:auto;background:#222;border-color:#333;color:#aaa;white-space:nowrap;height:29px;min-height:29px;padding:4px 12px}
 .bd-output .bd-btn-live-preview:hover{background:#2a2a2a;border-color:#555;color:#ddd}
 .bd-output .bd-btn-live-preview.active{background:#1a3a2a;color:#4fff8f;border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
+.bd-live-audio-toggle{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9ab;cursor:pointer;user-select:none;white-space:nowrap}
+.bd-live-audio-toggle input{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#6ab0ff}
+.bd-live-audio-every{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9ab;white-space:nowrap}
+.bd-live-audio-every.hidden{display:none!important}
+.bd-live-audio-every input{width:52px;background:#181818;border:1px solid #444;border-radius:5px;color:#eee;padding:3px 6px;font-size:11px}
 .bd-live-sample{width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:linear-gradient(165deg,#1a1a1a 0%,#121212 100%);border:1px solid #333;border-radius:10px;flex-shrink:0}
 .bd-live-sample.hidden{display:none!important}
 .bd-live-sample.receiving{border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
@@ -1100,6 +1105,8 @@ const STYLES = `
 .bd-live-sample-play.hidden{display:none!important}
 .bd-live-sample-range{flex:1 1 auto;min-width:0;height:16px;accent-color:#4fff8f;cursor:pointer}
 .bd-live-sample-frame{font-size:11px;color:#8aa;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bd-live-sample-audio{width:100%;height:32px;flex-shrink:0}
+.bd-live-sample-audio.hidden{display:none!important}
 .bd-main>.bd-live-sample{margin:0 0 4px}
 .bd-run-select-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:10px;color:#aaa}
 .bd-run-select-all-wrap{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#aaa;cursor:pointer;user-select:none;margin-left:2px}
@@ -1918,6 +1925,8 @@ function parseTimeline(raw, totalFrames, fps) {
         runSelectEnabled: false,
         runSelection: [],
         liveTaePreview: false,
+        liveAudioPreview: false,
+        liveAudioPreviewEvery: 5,
         batchDetailMode: "solo",
         segments: [{ id: uid(), start: 0, length: total, prompt: "", taskType: "", refs: [], refAudios: [], referenceVideo: {} }],
     };
@@ -2026,6 +2035,13 @@ function parseTimeline(raw, totalFrames, fps) {
         data.runSelection = Array.isArray(data.runSelection) ? data.runSelection.map((i) => parseInt(i, 10)).filter((i) => i >= 0) : [];
         // Default off when missing. Explicit true keeps in-node TAE + segment playback.
         data.liveTaePreview = data.liveTaePreview === true || data.live_tae_preview === true;
+        data.liveAudioPreview = data.liveAudioPreview === true || data.live_audio_preview === true;
+        {
+            const every = Math.round(Number(
+                data.liveAudioPreviewEvery ?? data.live_audio_preview_every,
+            ));
+            data.liveAudioPreviewEvery = Number.isFinite(every) ? Math.max(1, Math.min(50, every)) : 5;
+        }
         const detailMode = data.batchDetailMode ?? data.batch_detail_mode;
         data.batchDetailMode = detailMode === "all" ? "all" : "solo";
         if (data.timelineMode === "fl2v" || resolveTaskKey(data.global?.taskType || "") === "fl2v") {
@@ -2943,7 +2959,15 @@ class MiniMaxH3DirectorEditor {
                     <span data-i18n="output.continuityGradeAlign">段首光色对齐</span>
                 </label>
             </span>
-            <button type="button" class="bd-btn bd-btn-live-preview" data-a="live-tae-preview" data-i18n="toolbar.liveTaePreview" data-i18n-title="tooltip.liveTaePreview">实时预览</button>`;
+            <button type="button" class="bd-btn bd-btn-live-preview" data-a="live-tae-preview" data-i18n="toolbar.liveTaePreview" data-i18n-title="tooltip.liveTaePreview">实时预览</button>
+            <label class="bd-live-audio-toggle" data-r="live-audio-wrap" data-i18n-title="tooltip.liveAudioPreview">
+                <input type="checkbox" data-r="live-audio-preview">
+                <span data-i18n="toolbar.liveAudioPreview">音频预览</span>
+            </label>
+            <span class="bd-live-audio-every hidden" data-r="live-audio-every-wrap" data-i18n-title="tooltip.liveAudioPreviewEvery">
+                <input type="number" class="bd-num" data-r="live-audio-every" min="1" max="50" step="1" value="5">
+                <span data-i18n="toolbar.liveAudioPreviewEveryUnit">步一次</span>
+            </span>`;
         this.mainBody.appendChild(outputBar);
         this.outputBarEl = outputBar;
 
@@ -2960,6 +2984,7 @@ class MiniMaxH3DirectorEditor {
                 <div class="bd-live-sample-empty" data-r="live-sample-empty" data-i18n="liveSample.waiting">等待采样…</div>
                 <div class="bd-live-sample-badge hidden" data-r="live-sample-badge"></div>
             </div>
+            <audio class="bd-live-sample-audio hidden" data-r="live-sample-audio" controls preload="none"></audio>
             <div class="bd-live-sample-ctrl hidden" data-r="live-sample-ctrl">
                 <button type="button" class="bd-live-sample-play" data-r="live-sample-play"></button>
                 <input type="range" class="bd-live-sample-range" data-r="live-sample-range" min="0" max="0" value="0" step="1">
@@ -2975,6 +3000,7 @@ class MiniMaxH3DirectorEditor {
         this.liveSamplePlay = liveSample.querySelector('[data-r="live-sample-play"]');
         this.liveSampleRange = liveSample.querySelector('[data-r="live-sample-range"]');
         this.liveSampleFrameLabel = liveSample.querySelector('[data-r="live-sample-frame"]');
+        this.liveSampleAudio = liveSample.querySelector('[data-r="live-sample-audio"]');
         this._liveSampleHost = "main";
         this._liveSampleFrames = [];
         this._liveSampleIndex = null;
@@ -3344,7 +3370,32 @@ class MiniMaxH3DirectorEditor {
         bind('[data-a="live-tae-preview"]', () => this.toggleLiveTaePreview());
         bind('[data-a="frame-prev"]', () => this.stepFrame(-1));
         bind('[data-a="frame-next"]', () => this.stepFrame(1));
+        this.liveAudioCb = this.root?.querySelector('[data-r="live-audio-preview"]');
+        this.liveAudioEveryWrap = this.root?.querySelector('[data-r="live-audio-every-wrap"]');
+        this.liveAudioEveryInput = this.root?.querySelector('[data-r="live-audio-every"]');
+        if (this.liveAudioCb) {
+            this.liveAudioCb.onchange = () => {
+                this.timeline.liveAudioPreview = !!this.liveAudioCb.checked;
+                this.refreshLiveAudioPreviewControls();
+                this.updateLiveSamplePanel();
+                this.scheduleTimelineSync();
+                this.updateDomWidgetHeight?.();
+                syncDirectorNodeSize(this.node, this);
+            };
+        }
+        if (this.liveAudioEveryInput) {
+            const applyAudioEvery = () => {
+                const n = clamp(Math.round(Number(this.liveAudioEveryInput.value) || 5), 1, 50);
+                this.timeline.liveAudioPreviewEvery = n;
+                this.liveAudioEveryInput.value = String(n);
+                this.scheduleTimelineSync();
+            };
+            this.liveAudioEveryInput.onchange = applyAudioEvery;
+            this.liveAudioEveryInput.addEventListener("keydown", (e) => e.stopPropagation());
+            this.liveAudioEveryInput.addEventListener("keyup", (e) => e.stopPropagation());
+        }
         this.refreshLiveTaePreviewButton();
+        this.refreshLiveAudioPreviewControls();
         this.updateLiveSamplePanel();
 
         this.seekBar.oninput = () => {
@@ -6095,6 +6146,7 @@ class MiniMaxH3DirectorEditor {
         this.updateSelectionUI?.();
         this.refreshLoopButtonTitle?.();
         this.refreshLiveTaePreviewButton?.();
+        this.refreshLiveAudioPreviewControls?.();
         this.updateLiveSamplePanel?.();
         this.syncTimelineZoomUI?.();
         this.syncExternalGroupsTimeline?.();
@@ -11595,9 +11647,29 @@ class MiniMaxH3DirectorEditor {
         return this.timeline?.liveTaePreview === true;
     }
 
+    isLiveAudioPreviewEnabled() {
+        return this.timeline?.liveAudioPreview === true;
+    }
+
+    isLivePreviewAny() {
+        return this.isLiveTaePreviewEnabled() || this.isLiveAudioPreviewEnabled();
+    }
+
+    liveAudioPreviewEvery() {
+        const n = Math.round(Number(this.timeline?.liveAudioPreviewEvery));
+        return Number.isFinite(n) ? clamp(n, 1, 50) : 5;
+    }
+
+    refreshLiveAudioPreviewControls() {
+        const on = this.isLiveAudioPreviewEnabled();
+        if (this.liveAudioCb) this.liveAudioCb.checked = on;
+        if (this.liveAudioEveryWrap) this.liveAudioEveryWrap.classList.toggle("hidden", !on);
+        if (this.liveAudioEveryInput) this.liveAudioEveryInput.value = String(this.liveAudioPreviewEvery());
+    }
+
     /** fl2v / v2v / rv2v (and aliases): show dedicated live-sample panel when toggle is on. */
     needsLiveSamplePanel() {
-        if (!this.isLiveTaePreviewEnabled()) return false;
+        if (!this.isLivePreviewAny()) return false;
         if (this.isImageBatch?.()) return false;
         if (this.isFl2vMode?.()) return true;
         const key = this.getTaskKey?.() || "";
@@ -11650,7 +11722,7 @@ class MiniMaxH3DirectorEditor {
         const layout = this._activePromptLayout();
 
         // v2v: preview sits to the right of the prompt column.
-        if (this.usesV2vPromptStyle?.() && this.isLiveTaePreviewEnabled() && layout) {
+        if (this.usesV2vPromptStyle?.() && this.isLivePreviewAny() && layout) {
             if (panel.parentElement !== layout) layout.appendChild(panel);
             this.globalPromptLayout?.classList.toggle("bd-v2v-with-live", layout === this.globalPromptLayout);
             this.segPromptLayout?.classList.toggle("bd-v2v-with-live", layout === this.segPromptLayout);
@@ -11661,7 +11733,7 @@ class MiniMaxH3DirectorEditor {
         }
 
         // rv2v: preview under the prompt (same stack as r2v right column).
-        if (this.usesRv2vRefStyle?.() && this.isLiveTaePreviewEnabled() && layout) {
+        if (this.usesRv2vRefStyle?.() && this.isLivePreviewAny() && layout) {
             const promptCol = layout.querySelector(".bd-prompt-col");
             if (promptCol) {
                 if (panel.parentElement !== promptCol) promptCol.appendChild(panel);
@@ -11749,6 +11821,30 @@ class MiniMaxH3DirectorEditor {
         }, interval);
     }
 
+    _setLiveSampleAudio(b64, mime) {
+        const el = this.liveSampleAudio;
+        if (!el) return;
+        if (!b64) {
+            el.classList.add("hidden");
+            return;
+        }
+        if (this._liveSampleAudioB64 === b64) return;
+        const wasPlaying = !el.paused && !el.ended && !!el.getAttribute("src");
+        const src = String(b64).startsWith("data:")
+            ? b64
+            : `data:${mime || "audio/wav"};base64,${b64}`;
+        el.src = src;
+        el.classList.remove("hidden");
+        this._liveSampleAudioB64 = b64;
+        if (wasPlaying) {
+            const resume = () => {
+                el.removeEventListener("canplay", resume);
+                el.play?.().catch(() => {});
+            };
+            el.addEventListener("canplay", resume);
+        }
+    }
+
     clearLiveSamplePreview() {
         this._stopLiveSampleTimer();
         this._liveSampleB64 = "";
@@ -11757,10 +11853,16 @@ class MiniMaxH3DirectorEditor {
         this._liveSampleSeg = null;
         this._liveSampleFrames = [];
         this._liveSampleIndex = null;
+        this._liveSampleAudioB64 = "";
         this.liveSampleEl?.classList.remove("receiving");
         if (this.liveSampleImg) {
             this.liveSampleImg.removeAttribute("src");
             this.liveSampleImg.classList.add("hidden");
+        }
+        if (this.liveSampleAudio) {
+            try { this.liveSampleAudio.pause(); } catch { /* ignore */ }
+            this.liveSampleAudio.removeAttribute("src");
+            this.liveSampleAudio.classList.add("hidden");
         }
         this.liveSampleEmpty?.classList.remove("hidden");
         this.liveSampleBadge?.classList.add("hidden");
@@ -11774,27 +11876,42 @@ class MiniMaxH3DirectorEditor {
         const incoming = Array.isArray(detail.frames) && detail.frames.length
             ? detail.frames
             : (b64 ? [b64] : []);
-        if (!incoming.length) return;
+        const audioB64 = detail.audio_b64 || detail.audioB64 || "";
+        if (!incoming.length && !audioB64) return;
         this._placeLiveSamplePanel();
         this.liveSampleEl?.classList.remove("hidden");
-        this._liveSampleFrames = incoming;
-        if (typeof detail.mime === "string" && detail.mime) this._liveSampleMime = detail.mime;
-        if (Number.isFinite(Number(detail.fps)) && Number(detail.fps) > 0) {
-            this._liveSampleFps = Number(detail.fps);
-        }
+
         this._liveSampleStep = detail.step ?? null;
         this._liveSampleTotal = detail.total_steps ?? detail.totalSteps ?? null;
         this._liveSampleSeg = detail.segment_index ?? detail.segmentIndex ?? null;
 
-        const stored = Number(this._liveSampleIndex);
-        const index = Number.isFinite(stored)
-            ? clamp(Math.round(stored), 0, incoming.length - 1)
-            : Math.floor((incoming.length - 1) / 2);
-        const multi = incoming.length > 1;
-        this.liveSampleCtrl?.classList.toggle("hidden", !multi);
-        this._showLiveSampleFrame(index);
-        this._syncLiveSamplePlayButton();
-        this.liveSampleEmpty?.classList.add("hidden");
+        if (audioB64) {
+            this._setLiveSampleAudio(
+                audioB64,
+                detail.audio_mime || detail.audioMime || "audio/wav",
+            );
+        }
+
+        if (incoming.length) {
+            this._liveSampleFrames = incoming;
+            if (typeof detail.mime === "string" && detail.mime) this._liveSampleMime = detail.mime;
+            if (Number.isFinite(Number(detail.fps)) && Number(detail.fps) > 0) {
+                this._liveSampleFps = Number(detail.fps);
+            }
+            const stored = Number(this._liveSampleIndex);
+            const index = Number.isFinite(stored)
+                ? clamp(Math.round(stored), 0, incoming.length - 1)
+                : Math.floor((incoming.length - 1) / 2);
+            const multi = incoming.length > 1;
+            this.liveSampleCtrl?.classList.toggle("hidden", !multi);
+            this._showLiveSampleFrame(index);
+            this._syncLiveSamplePlayButton();
+            this.liveSampleEmpty?.classList.add("hidden");
+            if (this._liveSamplePlaying) this._tickLiveSample();
+        } else if (!this._liveSampleB64) {
+            // Audio-only arrival with no prior video frame: hide the placeholder.
+            this.liveSampleEmpty?.classList.add("hidden");
+        }
         this.liveSampleEl?.classList.toggle("receiving", !!detail.live);
 
         const step = this._liveSampleStep;
@@ -11816,7 +11933,6 @@ class MiniMaxH3DirectorEditor {
                 ? (segLabel || t("liveSample.sampling"))
                 : (segLabel || t("liveSample.done"));
         }
-        if (this._liveSamplePlaying) this._tickLiveSample();
     }
 
     /** Keep timeline / 素材组 selection on the segment the run is currently on. */
@@ -12774,6 +12890,8 @@ app.registerExtension({
                         step: detail?.step,
                         total_steps: detail?.total_steps,
                         mime: detail?.mime,
+                        audio_b64: detail?.audio_b64,
+                        audio_mime: detail?.audio_mime,
                     },
                 );
                 return;
@@ -12796,6 +12914,8 @@ app.registerExtension({
                     seg.previewLive = false;
                     seg.previewStep = null;
                     seg.previewTotalSteps = null;
+                    seg.previewAudioB64 = "";
+                    seg.previewAudioMime = "";
                 }
                 editor.renderImageBatchGroups?.();
             }

@@ -618,6 +618,8 @@ export const IMAGE_BATCH_STYLES = `
 .bd-live-frame-ctrl .bd-live-play:hover{border-color:#4fff8f;color:#4fff8f}
 .bd-live-frame-range{flex:1 1 auto;min-width:0;height:14px;accent-color:#4fff8f;cursor:pointer}
 .bd-live-frame-label{font-size:10px;color:#8aa;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bd-live-audio{width:100%;height:28px;flex-shrink:0;margin-top:2px}
+.bd-batch-live-preview img.bd-live-preview.hidden{display:none!important}
 .bd-batch-live-badge{position:absolute;left:8px;top:8px;padding:2px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#cfcfcf;font-size:10px;pointer-events:none}
 @media(max-width:860px){
 .bd-batch-r2v-body,.bd-batch-r2v-foot{grid-template-columns:1fr}
@@ -2182,7 +2184,10 @@ function _showLiveFrame(state, seg, index) {
     const i = clamp(Math.round(index), 0, frames.length - 1);
     state.idx = i;
     seg.previewFrameIndex = i;
-    if (state.img) state.img.src = frameSrc(frames[i], seg.previewMime);
+    if (state.img) {
+        state.img.src = frameSrc(frames[i], seg.previewMime);
+        state.img.classList.remove("hidden");
+    }
     if (state.range) state.range.value = String(i);
     if (state.label) state.label.textContent = t("batch.frameIndex", { i: i + 1, n: frames.length });
 }
@@ -2205,6 +2210,7 @@ function mountLivePreview(el, seg, badgeText) {
     img.className = "bd-live-preview";
     img.alt = "live preview";
     const frames = _liveFrames(seg);
+    if (!frames.length) img.classList.add("hidden");
     const state = {
         playing: seg.previewPlaying !== false,
         timer: null,
@@ -2273,6 +2279,16 @@ function mountLivePreview(el, seg, badgeText) {
         syncPlay();
     }
     wrap.appendChild(badge);
+    if (seg.previewAudioB64) {
+        const audio = document.createElement("audio");
+        audio.className = "bd-live-audio";
+        audio.controls = true;
+        audio.preload = "none";
+        audio.src = frameSrc(seg.previewAudioB64, seg.previewAudioMime || "audio/wav");
+        wrap.appendChild(audio);
+        state.audio = audio;
+        state.audioB64 = seg.previewAudioB64;
+    }
     el.appendChild(wrap);
     _showLiveFrame(state, seg, state.idx);
     _tickLiveFrame(state, seg);
@@ -2301,6 +2317,36 @@ function updateLivePreview(preview, seg, badgeText) {
         _showLiveFrame(state, seg, state.playing ? state.idx : _liveFrameIndex(seg, frames.length));
     } else {
         _showLiveFrame(state, seg, state.playing ? state.idx : 0);
+    }
+    let audio = preview.querySelector("audio.bd-live-audio");
+    const audioB64 = seg.previewAudioB64 || "";
+    if (audioB64) {
+        if (!audio) {
+            audio = document.createElement("audio");
+            audio.className = "bd-live-audio";
+            audio.controls = true;
+            audio.preload = "none";
+            wrap.appendChild(audio);
+        }
+        // Only reset the source when the clip actually changed; re-assigning the
+        // same data URL every video step would restart playback constantly.
+        if (state.audioB64 !== audioB64) {
+            const wasPlaying = !audio.paused && !audio.ended && !!audio.getAttribute("src");
+            audio.src = frameSrc(audioB64, seg.previewAudioMime || "audio/wav");
+            state.audioB64 = audioB64;
+            if (wasPlaying) {
+                const resume = () => {
+                    audio.removeEventListener("canplay", resume);
+                    audio.play?.().catch(() => {});
+                };
+                audio.addEventListener("canplay", resume);
+            }
+        }
+        state.audio = audio;
+    } else if (audio) {
+        audio.remove();
+        state.audio = null;
+        state.audioB64 = "";
     }
     if (state.playing) _tickLiveFrame(state, seg);
 }
@@ -2978,7 +3024,11 @@ function appendBatchCard(list, editor, seg, index, ctx) {
 export function setImageBatchPreview(editor, segmentIndex, imageB64, extra = {}) {
     const seg = editor.timeline.segments[segmentIndex];
     if (!seg) return;
-    seg.previewB64 = imageB64 || "";
+    if (imageB64) seg.previewB64 = imageB64;
+    if (extra.audio_b64) {
+        seg.previewAudioB64 = extra.audio_b64;
+        seg.previewAudioMime = extra.audio_mime || "audio/wav";
+    }
     if (extra.mime) seg.previewMime = extra.mime;
     else if (!extra.live) seg.previewMime = "image/jpeg";
     if (extra.step != null) seg.previewStep = extra.step;
@@ -3001,7 +3051,7 @@ export function setImageBatchPreview(editor, segmentIndex, imageB64, extra = {})
     }
 
     // Live sampling updates: patch the card preview in-place (avoid full re-render thrash).
-    if (extra.live && imageB64) {
+    if (extra.live && (imageB64 || extra.audio_b64)) {
         const card = batchCardEl(editor, segmentIndex);
         const preview = card?.querySelector?.(".bd-batch-preview");
         if (preview) {
@@ -3012,11 +3062,11 @@ export function setImageBatchPreview(editor, segmentIndex, imageB64, extra = {})
                 : t("batch.generating");
             updateLivePreview(preview, seg, badgeText);
             const pickThumb = editor.batchPicker?.querySelector?.(`.bd-batch-pick[data-batch-index="${segmentIndex}"] img.bd-batch-pick-thumb`);
-            if (pickThumb) pickThumb.src = frameSrc(imageB64, extra.mime || seg.previewMime);
+            if (pickThumb && imageB64) pickThumb.src = frameSrc(imageB64, extra.mime || seg.previewMime);
             return;
         }
         const pick = editor.batchPicker?.querySelector?.(`.bd-batch-pick[data-batch-index="${segmentIndex}"]`);
-        if (pick) {
+        if (pick && imageB64) {
             pick.classList.add("running");
             let img = pick.querySelector("img.bd-batch-pick-thumb");
             if (!img) {

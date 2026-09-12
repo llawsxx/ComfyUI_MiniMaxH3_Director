@@ -302,3 +302,50 @@ def encode_preview_frames_payload(
         return [], "image/jpeg", 0, 0
     b64 = [pil_to_jpeg_b64(frame, quality=quality) for frame in frames]
     return b64, "image/jpeg", frames[0].width, frames[0].height
+
+
+def encode_wav_b64(
+    waveform: Any,
+    sample_rate: int = 32000,
+    *,
+    max_seconds: float = 0.0,
+    mono: bool = True,
+) -> str:
+    """Encode a ComfyUI AUDIO waveform ``[B,C,T]`` to base64 16-bit PCM WAV.
+
+    Preview only: down-mixes to mono. ``max_seconds > 0`` keeps only the tail.
+    """
+    import base64
+    import io
+    import wave
+
+    if isinstance(waveform, dict):
+        sample_rate = int(waveform.get("sample_rate") or sample_rate)
+        waveform = waveform.get("waveform")
+    if not torch.is_tensor(waveform) or waveform.numel() <= 0:
+        return ""
+    wf = waveform.detach().float()
+    if wf.ndim == 3:
+        wf = wf[0]
+    if wf.ndim == 1:
+        wf = wf.unsqueeze(0)
+    if wf.ndim != 2:
+        return ""
+    # ComfyUI AUDIO is [C, T]; tolerate a [T, C] view from some decoders.
+    if int(wf.shape[0]) > int(wf.shape[1]):
+        wf = wf.transpose(0, 1)
+    if mono and int(wf.shape[0]) > 1:
+        wf = wf.mean(dim=0, keepdim=True)
+    sr = int(sample_rate or 32000)
+    cap = int(sr * float(max_seconds)) if max_seconds and max_seconds > 0 else 0
+    if cap > 0 and int(wf.shape[-1]) > cap:
+        wf = wf[..., -cap:]
+    pcm = (wf.clamp(-1.0, 1.0) * 32767.0).to(torch.int16)
+    arr = pcm.transpose(0, 1).contiguous().cpu().numpy()
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as writer:
+        writer.setnchannels(int(arr.shape[1]))
+        writer.setsampwidth(2)
+        writer.setframerate(sr)
+        writer.writeframes(arr.tobytes())
+    return base64.b64encode(buf.getvalue()).decode("ascii")
