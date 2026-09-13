@@ -324,6 +324,14 @@ function sanitizeSegmentForPayload(seg) {
         previewB64,
         previewFrames,
         previewMime,
+        previewFps,
+        previewLive,
+        previewStep,
+        previewTotalSteps,
+        previewFrameIndex,
+        previewPlaying,
+        previewAudioB64,
+        previewAudioMime,
         imageB64,
         ...rest
     } = seg;
