@@ -392,6 +392,7 @@ def execute_director_plan_core(
     sampler: str = "res_multistep",
     scheduler: str = "simple",
     sigmas=None,
+    sigmas_source: str = "",
     shift_video: float = 12.0,
     shift_audio: float = 3.0,
     clear_vram_between_segments: bool = True,
@@ -414,6 +415,7 @@ def execute_director_plan_core(
     first_pass_sigmas = first_pass_sigmas_override(sigmas)
     plan.sample_sigmas = first_pass_sigmas
     plan.sample_sigmas_linked = first_pass_sigmas is not None
+    plan.sample_sigmas_source = str(sigmas_source or ("linked" if first_pass_sigmas is not None else ""))
     plan.sample_shift_video = float(shift_video)
     plan.sample_shift_audio = float(shift_audio)
     audio_mode = resolve_audio_mode(plan)
@@ -470,11 +472,33 @@ def execute_director_plan_core(
     reports: list[str] = [plan_summary(plan), "", "Execution path: ComfyUI official MiniMax H3"]
     if first_pass_sigmas is not None:
         sigma_steps = max(0, len(first_pass_sigmas) - 1)
+        sigma_label = "编辑框 SIGMAS" if plan.sample_sigmas_source == "editor" else "外接 SIGMAS"
         reports.append(
-            f"Sample: 外接 SIGMAS（{sigma_steps} 步）→ MiniMaxH3SigmaShift(model) → "
+            f"Sample: {sigma_label}（{sigma_steps} 步）→ MiniMaxH3SigmaShift(model) → "
             "BasicGuider/CFGGuider → SamplerCustomAdvanced。"
-            "导演台步数/调度器已忽略。"
+            + (
+                "编辑值已接管采样；步数用于校验，调度器用于重新生成默认表。"
+                if plan.sample_sigmas_source == "editor"
+                else "导演台步数/调度器已忽略。"
+            )
         )
+        if plan.sample_sigmas_source == "editor":
+            from .sigma_schedule import audio_sigma_values, repeated_sigma_indices
+
+            audio_sigmas = audio_sigma_values(first_pass_sigmas, shift_video, shift_audio)
+            reports.append(
+                "Video sigmas: " + ", ".join(f"{value:.6g}" for value in first_pass_sigmas)
+            )
+            reports.append(
+                "Audio sigmas: " + ", ".join(f"{value:.6g}" for value in audio_sigmas)
+            )
+            repeated = repeated_sigma_indices(first_pass_sigmas)
+            if repeated:
+                reports.append(
+                    "Sigma warning: 相邻重复值位于边界 "
+                    + ", ".join(str(index) for index in repeated)
+                    + "；可能降低声画质量。"
+                )
     else:
         if sigmas is not None:
             reports.append(

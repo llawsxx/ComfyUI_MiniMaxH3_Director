@@ -194,7 +194,7 @@ def first_pass_cache_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[s
     if linked:
         fp["steps"] = 0
         fp["scheduler"] = "external_sigmas"
-        fp["sigmas_source"] = "linked"
+        fp["sigmas_source"] = str(getattr(plan, "sample_sigmas_source", "") or "linked")
         if sigmas:
             fp["sigmas"] = [round(float(x), 6) for x in sigmas]
     else:

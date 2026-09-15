@@ -549,6 +549,25 @@ async def minimax_first_pass_cache_status(request):
         plan.sample_sampler = str(body.get("sampler") or "")
         plan.sample_scheduler = str(body.get("scheduler") or "")
         plan.sample_sigmas_linked = bool(body.get("sigmas_linked"))
+        sigma_values = str(body.get("sigma_values") or "").strip()
+        if sigma_values and not plan.sample_sigmas_linked:
+            from .sigma_schedule import calculate_h3_sigma_schedule, parse_sigma_values
+
+            generated, _ = calculate_h3_sigma_schedule(
+                plan.sample_steps,
+                plan.sample_scheduler,
+                float(body.get("shift_video") or 12.0),
+                float(body.get("shift_audio") or 3.0),
+            )
+            plan.sample_sigmas = parse_sigma_values(
+                sigma_values,
+                expected_steps=plan.sample_steps,
+                expected_count=len(generated),
+            )
+            plan.sample_sigmas_linked = True
+            plan.sample_sigmas_source = "editor"
+        elif plan.sample_sigmas_linked:
+            plan.sample_sigmas_source = "linked"
         plan.sample_shift_video = float(body.get("shift_video") or 12.0)
         plan.sample_shift_audio = float(body.get("shift_audio") or 3.0)
         return web.json_response(inspect_first_pass_cache(node_id, plan))
@@ -583,6 +602,63 @@ async def minimax_clear_segment_cache(request):
     except Exception as exc:
         log.warning("MiniMax H3 Director clear segment cache failed: %s", exc)
         return web.Response(status=500, text=str(exc))
+
+
+async def minimax_sigma_schedule(request):
+    """Calculate or validate an editable H3 video/audio sigma schedule."""
+    try:
+        body = await request.json()
+    except Exception as exc:
+        return web.Response(status=400, text=f"Invalid JSON: {exc}")
+
+    try:
+        from .sigma_schedule import (
+            audio_sigma_values,
+            calculate_h3_sigma_schedule,
+            format_sigma_values,
+            parse_sigma_values,
+            repeated_sigma_indices,
+        )
+
+        steps = int(body.get("steps", 25))
+        shift_video = float(body.get("shift_video", 12.0))
+        shift_audio = float(body.get("shift_audio", 3.0))
+        raw_values = str(body.get("sigma_values") or "").strip()
+        if raw_values:
+            generated, _ = calculate_h3_sigma_schedule(
+                steps,
+                str(body.get("scheduler") or "simple"),
+                shift_video,
+                shift_audio,
+            )
+            video, audio = (
+                parse_sigma_values(
+                    raw_values,
+                    expected_steps=steps,
+                    expected_count=len(generated),
+                ),
+                None,
+            )
+            audio = audio_sigma_values(video, shift_video, shift_audio)
+        else:
+            video, audio = calculate_h3_sigma_schedule(
+                steps,
+                str(body.get("scheduler") or "simple"),
+                shift_video,
+                shift_audio,
+            )
+        return web.json_response(
+            {
+                "video": list(video),
+                "audio": list(audio),
+                "video_text": format_sigma_values(video),
+                "audio_text": format_sigma_values(audio),
+                "steps": len(video) - 1,
+                "repeated_indices": repeated_sigma_indices(video),
+            }
+        )
+    except Exception as exc:
+        return web.json_response({"error": str(exc)}, status=400)
 
 
 def _register_route(routes, method: str, path: str, handler) -> None:
@@ -636,6 +712,12 @@ def register_routes() -> bool:
         "POST",
         "/minimax/director/clear_segment_cache",
         minimax_clear_segment_cache,
+    )
+    _register_route(
+        routes,
+        "POST",
+        "/minimax/director/sigma_schedule",
+        minimax_sigma_schedule,
     )
     from .pack import minimax_download_pack, minimax_export_pack, minimax_import_pack
 

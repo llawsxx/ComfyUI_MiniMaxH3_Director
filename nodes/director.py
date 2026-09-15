@@ -142,6 +142,29 @@ class MiniMaxH3Director:
                     {"default": 3.0, "min": 0.01, "max": 100.0, "step": 0.01, "tooltip": "MiniMaxH3SigmaShift shift_audio."},
                 ),
                 **director_perf_inputs(),
+                "sigma_values": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "tooltip": (
+                            "一采 Video Sigma 编辑器，每行一个数，通常共 steps + 1 个，最后必须为 0。"
+                            "留空时仍按步数 + 调度器自动计算；非空时使用这里的数值。"
+                        ),
+                    },
+                ),
+                "sigma_audio_preview": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "dynamicPrompts": False,
+                        "tooltip": (
+                            "只读：由 Video Sigma、shift_video 和 shift_audio 换算出的 Audio Sigma。"
+                        ),
+                    },
+                ),
                 "sigmas": (
                     "SIGMAS",
                     {
@@ -220,6 +243,8 @@ class MiniMaxH3Director:
         r2v_groups=None,
         refine=None,
         sigmas=None,
+        sigma_values="",
+        sigma_audio_preview="",
         steps=25,
         sampler="res_multistep",
         scheduler="simple",
@@ -231,7 +256,22 @@ class MiniMaxH3Director:
         export_source_images=False,
         **kwargs,
     ):
-        del kwargs
+        del kwargs, sigma_audio_preview
+
+        sigma_override = sigmas
+        sigma_source = "linked" if sigmas is not None else ""
+        if sigmas is None and str(sigma_values or "").strip():
+            from ..director.sigma_schedule import calculate_h3_sigma_schedule, parse_sigma_values
+
+            default_sigmas, _ = calculate_h3_sigma_schedule(
+                int(steps), scheduler, shift_video, shift_audio
+            )
+            sigma_override = parse_sigma_values(
+                sigma_values,
+                expected_steps=int(steps),
+                expected_count=len(default_sigmas),
+            )
+            sigma_source = "editor"
 
         plan = prepare_director_plan(
             timeline_data=timeline_data,
@@ -262,7 +302,8 @@ class MiniMaxH3Director:
                     steps=steps,
                     sampler=sampler,
                     scheduler=scheduler,
-                    sigmas=sigmas,
+                    sigmas=sigma_override,
+                    sigmas_source=sigma_source,
                     shift_video=shift_video,
                     shift_audio=shift_audio,
                     clear_vram_between_segments=clear_vram_between_segments,

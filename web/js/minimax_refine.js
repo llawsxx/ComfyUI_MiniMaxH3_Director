@@ -278,6 +278,7 @@ function cacheStatusPayload(director) {
         scheduler: String(directorValue(director, "scheduler", "")),
         shift_video: Number(directorValue(director, "shift_video", 12)),
         shift_audio: Number(directorValue(director, "shift_audio", 3)),
+        sigma_values: String(directorValue(director, "sigma_values", "")),
         sigmas_linked: directorHasSigmasLink(director),
     };
 }

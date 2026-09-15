@@ -513,6 +513,8 @@ const HIDDEN_WIDGETS = [
 
 const DIRECTOR_WIDGET_LABEL_KEYS = {
     seed: "widget.seed",
+    sigma_values: "widget.sigmaValues",
+    sigma_audio_preview: "widget.sigmaAudioPreview",
     clear_vram_between_segments: "widget.clearVram",
     export_source_images: "widget.exportSourceImages",
     control_after_generate: "widget.controlAfterGenerate",
@@ -520,6 +522,8 @@ const DIRECTOR_WIDGET_LABEL_KEYS = {
 };
 
 const DIRECTOR_WIDGET_TOOLTIP_KEYS = {
+    sigma_values: "widget.tooltip.sigmaValues",
+    sigma_audio_preview: "widget.tooltip.sigmaAudioPreview",
     clear_vram_between_segments: "widget.tooltip.clearVram",
     export_source_images: "widget.tooltip.exportSourceImages",
 };
@@ -609,6 +613,7 @@ const DIRECTOR_SAMPLE_VALUE_WIDGETS = [
     "scheduler",
     "shift_video",
     "shift_audio",
+    "sigma_values",
     "cfg",
     "seed",
 ];
@@ -634,6 +639,7 @@ function hiddenWidgetDraw() {}
 
 function isValidSampleWidgetValue(name, widget, value) {
     if (value === undefined || value === null || value === "") return false;
+    if (name === "sigma_values") return typeof value === "string";
     if (name === "sampler" || name === "scheduler") {
         if (typeof value !== "string") return false;
         const opts = widget?.options?.values;
@@ -693,9 +699,102 @@ function hookDirectorSampleWidgetSnapshots(node) {
         w.callback = function (...args) {
             const r = prev?.apply(this, args);
             snapshotDirectorSampleWidgets(node);
+            if (!node._mmxSettingSigmaWidgets && DIRECTOR_SIGMA_SOURCE_WIDGETS.has(name)) {
+                scheduleDirectorSigmaRefresh(node, { regenerateVideo: name !== "shift_audio" });
+            } else if (!node._mmxSettingSigmaWidgets && name === "sigma_values") {
+                scheduleDirectorSigmaRefresh(node, { regenerateVideo: false });
+            }
             return r;
         };
     }
+}
+
+const DIRECTOR_SIGMA_SOURCE_WIDGETS = new Set([
+    "steps",
+    "scheduler",
+    "shift_video",
+    "shift_audio",
+]);
+
+function directorSigmaPayload(node, sigmaValues = "") {
+    return {
+        steps: Number(widgetByName(node, "steps")?.value ?? 25),
+        scheduler: String(widgetByName(node, "scheduler")?.value || "simple"),
+        shift_video: Number(widgetByName(node, "shift_video")?.value ?? 12),
+        shift_audio: Number(widgetByName(node, "shift_audio")?.value ?? 3),
+        sigma_values: String(sigmaValues || ""),
+    };
+}
+
+function setDirectorSigmaAudioReadonly(node) {
+    const audioWidget = widgetByName(node, "sigma_audio_preview");
+    if (!audioWidget) return;
+    audioWidget.serialize = false;
+    audioWidget.options = audioWidget.options || {};
+    audioWidget.options.serialize = false;
+    audioWidget.options.readOnly = true;
+    if (audioWidget.element) {
+        const field = audioWidget.element.matches?.("textarea,input")
+            ? audioWidget.element
+            : audioWidget.element.querySelector?.("textarea,input");
+        if (field) {
+            field.readOnly = true;
+            field.setAttribute?.("readonly", "readonly");
+        }
+        audioWidget.element.style.opacity = "0.82";
+    }
+}
+
+async function refreshDirectorSigmaEditor(node, { regenerateVideo = false } = {}) {
+    if (!node || directorHasSigmasLink(node)) return;
+    if (node._mmxPendingConfigureRestore) {
+        scheduleDirectorSigmaRefresh(node, { regenerateVideo });
+        return;
+    }
+    const videoWidget = widgetByName(node, "sigma_values");
+    const audioWidget = widgetByName(node, "sigma_audio_preview");
+    if (!videoWidget || !audioWidget) return;
+    setDirectorSigmaAudioReadonly(node);
+
+    const current = String(videoWidget.value || "").trim();
+    const generate = regenerateVideo || !current;
+    const requestId = (node._mmxSigmaRequestId || 0) + 1;
+    node._mmxSigmaRequestId = requestId;
+    try {
+        const response = await api.fetchApi("/minimax/director/sigma_schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(directorSigmaPayload(node, generate ? "" : current)),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+        if (node._mmxSigmaRequestId !== requestId) return;
+        node._mmxSettingSigmaWidgets = true;
+        try {
+            if (generate) videoWidget.value = String(data.video_text || "");
+            audioWidget.value = String(data.audio_text || "");
+        } finally {
+            node._mmxSettingSigmaWidgets = false;
+        }
+    } catch (error) {
+        if (node._mmxSigmaRequestId !== requestId) return;
+        node._mmxSettingSigmaWidgets = true;
+        try {
+            audioWidget.value = `⚠ ${error?.message || error}`;
+        } finally {
+            node._mmxSettingSigmaWidgets = false;
+        }
+    }
+    node.setDirtyCanvas?.(true, true);
+}
+
+function scheduleDirectorSigmaRefresh(node, options = {}) {
+    if (!node) return;
+    clearTimeout(node._mmxSigmaRefreshTimer);
+    node._mmxSigmaRefreshTimer = setTimeout(
+        () => refreshDirectorSigmaEditor(node, options),
+        180,
+    );
 }
 
 function lockDirectorSigmasInput(node) {
@@ -777,6 +876,9 @@ function syncDirectorSchedulerWidgets(node, { restore = false } = {}) {
     const wired = directorHasSigmasLink(node);
     setDirectorWidgetVisible(node, "steps", !wired);
     setDirectorWidgetVisible(node, "scheduler", !wired);
+    setDirectorWidgetVisible(node, "sigma_values", !wired);
+    setDirectorWidgetVisible(node, "sigma_audio_preview", !wired);
+    setDirectorSigmaAudioReadonly(node);
     if (restore) restoreDirectorSampleWidgets(node);
     node.setDirtyCanvas?.(true, true);
 }
@@ -1664,6 +1766,22 @@ function moveDirectorDomWidgetToEnd(node) {
 }
 
 const PERF_WIDGET_ORDER = ["bd_grp_perf", "clear_vram_between_segments"];
+const SIGMA_WIDGET_ORDER = ["sigma_values", "sigma_audio_preview"];
+
+function moveDirectorSigmaWidgetsBeforePerformance(node) {
+    if (!node?.widgets?.length) return;
+    const widgets = SIGMA_WIDGET_ORDER
+        .map((name) => node.widgets.find((widget) => widget.name === name))
+        .filter(Boolean);
+    const performance = node.widgets.find((widget) => widget.name === "bd_grp_perf");
+    if (!widgets.length || !performance) return;
+    for (const widget of widgets) {
+        const index = node.widgets.indexOf(widget);
+        if (index !== -1) node.widgets.splice(index, 1);
+    }
+    const insertAt = node.widgets.indexOf(performance);
+    node.widgets.splice(insertAt < 0 ? node.widgets.length : insertAt, 0, ...widgets);
+}
 
 function moveDirectorPerfWidgetsBeforeTimeline(node) {
     const dom = node?._minimaxDomWidget;
@@ -1685,6 +1803,7 @@ function moveDirectorPerfWidgetsBeforeTimeline(node) {
 }
 
 function finalizeDirectorWidgetOrder(node) {
+    moveDirectorSigmaWidgetsBeforePerformance(node);
     moveDirectorPerfWidgetsBeforeTimeline(node);
     moveDirectorDomWidgetToEnd(node);
 }
@@ -13024,6 +13143,10 @@ app.registerExtension({
             // ComfyUI may attach seed's control_after_generate combo after onNodeCreated.
             queueMicrotask(() => applyDirectorWidgetLabels(this));
             setTimeout(() => applyDirectorWidgetLabels(this), 0);
+            setTimeout(() => {
+                const empty = !String(widgetByName(this, "sigma_values")?.value || "").trim();
+                scheduleDirectorSigmaRefresh(this, { regenerateVideo: empty });
+            }, 120);
             this.size = [1000, 680];
 
             const existingDom = pruneDirectorDomWidgets(this);
@@ -13113,6 +13236,12 @@ app.registerExtension({
             if (DIRECTOR_SAMPLE_VALUE_WIDGETS.includes(String(name || ""))) {
                 snapshotDirectorSampleWidgets(this);
             }
+            const key = String(name || "");
+            if (!this._mmxRestoringSampleWidgets && DIRECTOR_SIGMA_SOURCE_WIDGETS.has(key)) {
+                scheduleDirectorSigmaRefresh(this, { regenerateVideo: key !== "shift_audio" });
+            } else if (!this._mmxRestoringSampleWidgets && key === "sigma_values") {
+                scheduleDirectorSigmaRefresh(this, { regenerateVideo: false });
+            }
             return out;
         };
 
@@ -13125,6 +13254,7 @@ app.registerExtension({
 
         const onRemoved = nodeType.prototype.onRemoved;
         nodeType.prototype.onRemoved = function () {
+            clearTimeout(this._mmxSigmaRefreshTimer);
             destroyDirectorEditor(this);
             return onRemoved?.apply(this, arguments);
         };
@@ -13142,6 +13272,9 @@ app.registerExtension({
             setTimeout(() => {
                 finishDirectorConfigureRestore(this);
                 syncDirectorSchedulerWidgets(this, { restore: false });
+                scheduleDirectorSigmaRefresh(this, {
+                    regenerateVideo: !String(widgetByName(this, "sigma_values")?.value || "").trim(),
+                });
                 const ed = initDirectorEditor(this) || this._minimaxEditor;
                 if (!ed) return;
                 const initTotal = Math.max(0, parseInt(ed.totalFramesWidget?.value || 124, 10));
@@ -13170,4 +13303,3 @@ app.registerExtension({
         };
     },
 });
-

@@ -300,6 +300,7 @@ class DirectorPlan:
     sample_scheduler: str = ""
     sample_sigmas: tuple[float, ...] | None = None
     sample_sigmas_linked: bool = False
+    sample_sigmas_source: str = ""
     sample_shift_video: float = 12.0
     sample_shift_audio: float = 3.0
     # Set during execute when export_mode=segments (minimax_seg_export folder).
