@@ -1212,6 +1212,9 @@ const STYLES = `
 .bd-live-audio-every{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9ab;white-space:nowrap}
 .bd-live-audio-every.hidden{display:none!important}
 .bd-live-audio-every input{width:52px;background:#181818;border:1px solid #444;border-radius:5px;color:#eee;padding:3px 6px;font-size:11px}
+.bd-live-preview-cfg{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9ab;white-space:nowrap}
+.bd-live-preview-cfg.hidden{display:none!important}
+.bd-live-preview-cfg input{width:48px;background:#181818;border:1px solid #444;border-radius:5px;color:#eee;padding:3px 6px;font-size:11px}
 .bd-live-sample{width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:linear-gradient(165deg,#1a1a1a 0%,#121212 100%);border:1px solid #333;border-radius:10px;flex-shrink:0}
 .bd-live-sample.hidden{display:none!important}
 .bd-live-sample.receiving{border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
@@ -2077,6 +2080,8 @@ function parseTimeline(raw, totalFrames, fps) {
         liveTaePreview: false,
         liveAudioPreview: false,
         liveAudioPreviewEvery: 5,
+        livePreviewFrames: 16,
+        livePreviewFps: 12,
         batchDetailMode: "solo",
         segments: [{ id: uid(), start: 0, length: total, prompt: "", taskType: "", refs: [], refAudios: [], referenceVideo: {} }],
     };
@@ -2193,6 +2198,18 @@ function parseTimeline(raw, totalFrames, fps) {
                 data.liveAudioPreviewEvery ?? data.live_audio_preview_every,
             ));
             data.liveAudioPreviewEvery = Number.isFinite(every) ? Math.max(1, Math.min(50, every)) : 5;
+        }
+        {
+            const frames = Math.round(Number(
+                data.livePreviewFrames ?? data.live_preview_frames,
+            ));
+            data.livePreviewFrames = Number.isFinite(frames) ? Math.max(2, Math.min(64, frames)) : 16;
+        }
+        {
+            const fps = Math.round(Number(
+                data.livePreviewFps ?? data.live_preview_fps,
+            ));
+            data.livePreviewFps = Number.isFinite(fps) ? Math.max(1, Math.min(60, fps)) : 12;
         }
         const detailMode = data.batchDetailMode ?? data.batch_detail_mode;
         data.batchDetailMode = detailMode === "all" ? "all" : "solo";
@@ -3146,6 +3163,12 @@ class MiniMaxH3DirectorEditor {
                 </label>
             </span>
             <button type="button" class="bd-btn bd-btn-live-preview" data-a="live-tae-preview" data-i18n="toolbar.liveTaePreview" data-i18n-title="tooltip.liveTaePreview">实时预览</button>
+            <span class="bd-live-preview-cfg hidden" data-r="live-preview-cfg">
+                <input type="number" class="bd-num" data-r="live-preview-frames" min="2" max="64" step="1" value="16" data-i18n-title="tooltip.livePreviewFrames">
+                <span data-i18n="toolbar.livePreviewFramesUnit">帧</span>
+                <input type="number" class="bd-num" data-r="live-preview-fps" min="1" max="60" step="1" value="12" data-i18n-title="tooltip.livePreviewFps">
+                <span data-i18n="toolbar.livePreviewFpsUnit">fps</span>
+            </span>
             <label class="bd-live-audio-toggle" data-r="live-audio-wrap" data-i18n-title="tooltip.liveAudioPreview">
                 <input type="checkbox" data-r="live-audio-preview">
                 <span data-i18n="toolbar.liveAudioPreview">音频预览</span>
@@ -3561,6 +3584,31 @@ class MiniMaxH3DirectorEditor {
         this.liveAudioCb = this.root?.querySelector('[data-r="live-audio-preview"]');
         this.liveAudioEveryWrap = this.root?.querySelector('[data-r="live-audio-every-wrap"]');
         this.liveAudioEveryInput = this.root?.querySelector('[data-r="live-audio-every"]');
+        this.livePreviewCfg = this.root?.querySelector('[data-r="live-preview-cfg"]');
+        this.livePreviewFramesInput = this.root?.querySelector('[data-r="live-preview-frames"]');
+        this.livePreviewFpsInput = this.root?.querySelector('[data-r="live-preview-fps"]');
+        if (this.livePreviewFramesInput) {
+            const applyPreviewFrames = () => {
+                const n = clamp(Math.round(Number(this.livePreviewFramesInput.value) || 16), 2, 64);
+                this.timeline.livePreviewFrames = n;
+                this.livePreviewFramesInput.value = String(n);
+                this.scheduleTimelineSync();
+            };
+            this.livePreviewFramesInput.onchange = applyPreviewFrames;
+            this.livePreviewFramesInput.addEventListener("keydown", (e) => e.stopPropagation());
+            this.livePreviewFramesInput.addEventListener("keyup", (e) => e.stopPropagation());
+        }
+        if (this.livePreviewFpsInput) {
+            const applyPreviewFps = () => {
+                const n = clamp(Math.round(Number(this.livePreviewFpsInput.value) || 12), 1, 60);
+                this.timeline.livePreviewFps = n;
+                this.livePreviewFpsInput.value = String(n);
+                this.scheduleTimelineSync();
+            };
+            this.livePreviewFpsInput.onchange = applyPreviewFps;
+            this.livePreviewFpsInput.addEventListener("keydown", (e) => e.stopPropagation());
+            this.livePreviewFpsInput.addEventListener("keyup", (e) => e.stopPropagation());
+        }
         if (this.liveAudioCb) {
             this.liveAudioCb.onchange = () => {
                 this.timeline.liveAudioPreview = !!this.liveAudioCb.checked;
@@ -3584,6 +3632,7 @@ class MiniMaxH3DirectorEditor {
         }
         this.refreshLiveTaePreviewButton();
         this.refreshLiveAudioPreviewControls();
+        this.refreshLivePreviewControls();
         this.updateLiveSamplePanel();
 
         this.seekBar.oninput = () => {
@@ -6363,6 +6412,7 @@ class MiniMaxH3DirectorEditor {
         this.refreshLoopButtonTitle?.();
         this.refreshLiveTaePreviewButton?.();
         this.refreshLiveAudioPreviewControls?.();
+        this.refreshLivePreviewControls?.();
         this.updateLiveSamplePanel?.();
         this.syncTimelineZoomUI?.();
         this.syncExternalGroupsTimeline?.();
@@ -11902,6 +11952,23 @@ class MiniMaxH3DirectorEditor {
         if (this.liveAudioEveryInput) this.liveAudioEveryInput.value = String(this.liveAudioPreviewEvery());
     }
 
+    livePreviewFrames() {
+        const n = Math.round(Number(this.timeline?.livePreviewFrames));
+        return Number.isFinite(n) ? clamp(n, 2, 64) : 16;
+    }
+
+    livePreviewFps() {
+        const n = Math.round(Number(this.timeline?.livePreviewFps));
+        return Number.isFinite(n) ? clamp(n, 1, 60) : 12;
+    }
+
+    refreshLivePreviewControls() {
+        const on = this.isLiveTaePreviewEnabled();
+        if (this.livePreviewCfg) this.livePreviewCfg.classList.toggle("hidden", !on);
+        if (this.livePreviewFramesInput) this.livePreviewFramesInput.value = String(this.livePreviewFrames());
+        if (this.livePreviewFpsInput) this.livePreviewFpsInput.value = String(this.livePreviewFps());
+    }
+
     /** fl2v / v2v / rv2v (and aliases): show dedicated live-sample panel when toggle is on. */
     needsLiveSamplePanel() {
         if (!this.isLivePreviewAny()) return false;
@@ -11915,6 +11982,7 @@ class MiniMaxH3DirectorEditor {
     toggleLiveTaePreview() {
         this.timeline.liveTaePreview = !this.isLiveTaePreviewEnabled();
         this.refreshLiveTaePreviewButton();
+        this.refreshLivePreviewControls();
         this.updateLiveSamplePanel();
         this.scheduleTimelineSync();
         this.updateDomWidgetHeight?.();

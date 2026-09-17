@@ -460,6 +460,26 @@ def execute_director_plan_core(
         audio_preview_every = 5
     audio_preview_every = max(1, min(50, audio_preview_every))
     live_preview_any = live_tae_preview or live_audio_preview
+    # Live video preview shape: how many temporal frames to sample and the
+    # client-side playback fps (UI controls; fall back to the module defaults).
+    from .tae_preview import LIVE_PREVIEW_FPS as _DEF_PREVIEW_FPS
+    from .tae_preview import LIVE_PREVIEW_MAX_FRAMES as _DEF_PREVIEW_FRAMES
+
+    try:
+        live_preview_frames = int(
+            (plan.raw or {}).get("livePreviewFrames", _DEF_PREVIEW_FRAMES)
+            or _DEF_PREVIEW_FRAMES
+        )
+    except (TypeError, ValueError):
+        live_preview_frames = _DEF_PREVIEW_FRAMES
+    live_preview_frames = max(2, min(64, live_preview_frames))
+    try:
+        live_preview_fps = float(
+            (plan.raw or {}).get("livePreviewFps", _DEF_PREVIEW_FPS) or _DEF_PREVIEW_FPS
+        )
+    except (TypeError, ValueError):
+        live_preview_fps = float(_DEF_PREVIEW_FPS)
+    live_preview_fps = max(1.0, min(60.0, live_preview_fps))
 
     all_segments = plan.segments
     # Drop caches for deleted/shortened timelines. Use every segment index (not
@@ -535,7 +555,10 @@ def execute_director_plan_core(
     if mp4_run_dir is not None:
         reports.append(f"Segment mp4 export dir: {mp4_run_dir}")
     if live_tae_preview:
-        reports.append("Live preview: ON — 采样中 TAE 动态预览（成片看下游 CreateVideo / SaveVideo）。")
+        reports.append(
+            f"Live preview: ON — 采样中 TAE 动态预览（{live_preview_frames} 帧 @ {live_preview_fps:g}fps；"
+            "成片看下游 CreateVideo / SaveVideo）。"
+        )
     else:
         reports.append("Live preview: OFF — 跳过采样预览。")
     if live_audio_preview:
@@ -1171,15 +1194,13 @@ def execute_director_plan_core(
                 frame_kwargs: dict[str, Any] = {}
                 if live_tae_preview:
                     from .tae_preview import (
-                        LIVE_PREVIEW_FPS,
-                        LIVE_PREVIEW_MAX_FRAMES,
                         LIVE_PREVIEW_QUALITY,
                         encode_preview_frames_payload,
                         x0_to_preview_frames,
                     )
 
                     frames = x0_to_preview_frames(
-                        x0, max_frames=LIVE_PREVIEW_MAX_FRAMES, max_side=512
+                        x0, max_frames=live_preview_frames, max_side=512
                     )
                     if frames:
                         frame_b64s, mime, width, height = encode_preview_frames_payload(
@@ -1192,7 +1213,7 @@ def execute_director_plan_core(
                                 height=height,
                                 frames=frame_b64s,
                                 mime=mime,
-                                fps=float(LIVE_PREVIEW_FPS),
+                                fps=float(live_preview_fps),
                             )
 
                 audio_b64 = ""
