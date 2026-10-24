@@ -1674,9 +1674,7 @@ function getDirectorUiHeight(editor) {
         return batchH + 100;
     }
     if (editor?.getDirectorMode?.() === "fl2v") {
-        let h = getFl2vUiHeight(editor) + 110;
-        if (editor?.needsLiveSamplePanel?.()) h += LIVE_SAMPLE_PREVIEW_H + 12;
-        return h;
+        return getFl2vUiHeight(editor) + 110;
     }
     let h = (editor?.canvasHeight || RULER_H + SEG_LABEL_H + TRACK_H) + 370 + 52;
     if (
@@ -5236,6 +5234,7 @@ class MiniMaxH3DirectorEditor {
         this.root.querySelector(".bd-split")?.classList.toggle("hidden", (isBatch && !isR2v) || isFl2v);
         this.batchPanel?.classList.toggle("hidden", !isBatch);
         this.root?.classList.toggle("bd-batch-fill", !!isBatch);
+        this.root?.classList.toggle("bd-fl2v-fill", !!isFl2v);
         this.fl2vUi?.root?.classList.toggle("hidden", !isFl2v);
         this.fl2vTotalWrap?.classList.toggle("hidden", !isFl2v);
         if (isFl2v) {

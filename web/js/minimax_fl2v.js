@@ -22,7 +22,17 @@ import {
 } from "./minimax_gen_timeline.js";
 import { t } from "./minimax_i18n.js";
 
+const FL2V_SHOTS_MAX_H = 600;
+
 export const FL2V_STYLES = `
+.bd-wrap.bd-fl2v-fill .bd-main{flex:1 1 0;min-height:0;overflow:hidden}
+.bd-wrap.bd-fl2v-fill .bd-main>:not(.bd-fl2v-detail-wrap){flex-shrink:0}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-detail-wrap{flex:1 1 0;min-height:0;overflow:hidden}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-hint,.bd-wrap.bd-fl2v-fill .bd-fl2v-detail{flex:0 0 auto}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-workbench{flex:1 1 0;min-height:0;flex-wrap:nowrap}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-shots{min-height:0;max-height:none;align-self:stretch}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-workbench .bd-live-sample{min-height:0}
+.bd-wrap.bd-fl2v-fill .bd-fl2v-workbench .bd-live-sample-body{min-height:120px}
 .bd-fl2v-detail-wrap{width:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px}
 .bd-fl2v-hint{color:#aaa;font-size:11px;line-height:1.45;background:#181818;border:1px solid #333;border-radius:6px;padding:8px 10px}
 .bd-fl2v-hint b{color:#4fff8f;font-weight:600}
@@ -31,7 +41,7 @@ export const FL2V_STYLES = `
 .bd-fl2v-workbench .bd-live-sample .bd-live-sample-body{flex:1 1 auto;min-height:260px;max-height:none}
 .bd-fl2v-workbench .bd-live-sample .bd-live-sample-body img{width:100%;height:100%;max-height:420px;object-fit:contain}
 .bd-fl2v-workbench .bd-fl2v-shots{flex:2 1 420px;min-width:220px}
-.bd-fl2v-shots{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+.bd-fl2v-shots{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch;align-content:flex-start;max-height:${FL2V_SHOTS_MAX_H}px;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding:2px;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#555 #1a1a1a}
 .bd-fl2v-shot{width:220px;box-sizing:border-box;background:#1a1a1a;border:1px solid #333;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px;cursor:default;transition:border-color .15s,opacity .15s}
 .bd-fl2v-shot:hover{border-color:#555}
 .bd-fl2v-shot.selected{border-color:#4fff8f;box-shadow:0 0 0 1px rgba(79,255,143,.35)}
@@ -1144,6 +1154,7 @@ function renderFl2vShotCards(editor) {
     if (!ui?.shotsEl) return;
     applyFl2vSlotAspect(editor);
     const shots = editor.timeline.shots || [];
+    const scrollTop = ui.shotsEl.scrollTop;
     ui.shotsEl.innerHTML = "";
     shots.forEach((shot, i) => {
         const card = document.createElement("div");
@@ -1280,6 +1291,7 @@ function renderFl2vShotCards(editor) {
         secInput?.addEventListener("change", applySec);
         ui.shotsEl.appendChild(card);
     });
+    ui.shotsEl.scrollTop = scrollTop;
 }
 
 export function updateFl2vDetailUI(editor) {
@@ -1328,6 +1340,8 @@ export function updateFl2vDetailUI(editor) {
 export function bindFl2vEvents(editor) {
     const ui = editor.fl2vUi;
     if (!ui) return;
+
+    ui.shotsEl?.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
 
     // Total is read-only (sum of shots); ignore edits.
     ui.totalInput?.addEventListener("keydown", (e) => e.stopPropagation());
@@ -1540,7 +1554,9 @@ export function drawFl2vSegmentThumbnails(editor, ctx, seg, startX, pxWidth, y0,
 export function getFl2vUiHeight(editor) {
     const n = editor.timeline?.shots?.length || 0;
     const rows = Math.max(1, Math.ceil(n / 3));
-    return 420 + rows * 150 + 80;
+    const shotsH = Math.min(rows * 150, FL2V_SHOTS_MAX_H);
+    const previewH = editor?.needsLiveSamplePanel?.() ? 320 : 0;
+    return 420 + Math.max(shotsH, previewH) + 80;
 }
 
 export function buildFl2vPayloadFields(editor) {
