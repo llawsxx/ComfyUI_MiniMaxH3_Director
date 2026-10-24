@@ -44,6 +44,35 @@ Reference-audio slots can select an existing video or a local audio/video file. 
 
 `Export source to source_images` populates only the separate `source_images` output; it does not change `images`. Connect `source_images` to a preview or video compositor. Decode failures are reported explicitly and emit a neutral placeholder instead of generated frames.
 
+## Prompt text import and shared fl2v keyframes
+
+In `fl2v` or video generation groups (such as `t2v` / `i2v` / `r2v`), click **Import prompts** in the toolbar. Paste text or choose a UTF-8 `.txt` / `.md` file. Import is unavailable while externally wired groups control the shots; edit those source nodes instead.
+
+Use this format (a complete Chinese example is in [prompt_import_example.txt](docs/prompt_import_example.txt)):
+
+```text
+# MiniMax Director Prompts v1
+
+## 5s | Opening
+A woman stands under a streetlight on a rainy night. The camera slowly pushes in.
+Prompts may span multiple lines, including dialogue, camera movement and sound.
+
+## 3.5s | Walking to the car
+Side tracking shot as she closes her umbrella and approaches the car.
+```
+
+- Each shot starts with `## <seconds>s | <title>` at the beginning of a line (for example, `## 5s | Opening`). Its prompt continues until the next shot header. Titles and prompts must be nonempty.
+- The version marker on the first line is optional. Escape prompt lines starting with `## ` as `\## `; import restores the original text.
+- Seconds accept integers or one decimal place and are validated against the current frame rate. Sampling frames still align to the model's `17k+5` grid. Maximum file size is 2 MB; invalid text is not imported.
+- **Update existing shots in order** changes seconds, titles and prompts starting at shot 1, keeping media. Extra records create shots; untouched trailing shots remain.
+- **Append new shots** keeps existing shots. **Replace all shots** removes existing shots and their individual media before rebuilding from the text; shared parameters remain.
+
+Group cards in `t2v` / `i2v` / `r2v` / `mixed` include a **Title** field. Rename imported or manually created shots directly; an empty title uses the default group name. Titles are saved in workflows and director packs and retained when switching modes. Titles for externally wired groups remain local Director metadata and survive media/prompt resynchronization.
+
+In `fl2v`, enable **shared parameters** to use the same first/last-frame pair for every shot. The first activation initializes the pair from the selected shot. Choose or drop shared frames in the shared panel; all existing, newly added and imported shots use them. Start-only, end-only and no-image pairs are supported. Seconds, titles and prompts remain independent. Turning sharing off restores each shot's original images. Both the shared settings and individual images are saved in workflows and director packs. With external group nodes connected, external media takes priority and the shared keyframe panel is hidden.
+
+With shared parameters enabled, shots use a `t2v`-style vertical prompt-card list. Edit each shot's title, seconds and multiline prompt directly in its card, without repeated image slots or a separate selected-shot editor. Edit the shared images once in the shared panel. Disabling sharing restores the independent first/last-frame cards.
+
 ## Director pack (script + media)
 
 Toolbar **Import pack / Export pack** writes `*.mmxpack.zip`. Paths are ASCII only and match the English UI (independent of the current UI language).

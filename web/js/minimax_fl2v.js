@@ -87,6 +87,21 @@ export const FL2V_STYLES = `
 .bd-fl2v-total-wrap{display:inline-flex;align-items:center;gap:6px}
 .bd-fl2v-total-wrap.hidden{display:none!important}
 .bd-fl2v-total-wrap input:disabled{opacity:.75;cursor:default;color:#ccc}
+.bd-fl2v-common{flex:0 1 auto;min-height:0;max-height:40%;overflow:auto;padding:8px;border:1px solid #333;border-radius:6px;background:#161616}
+.bd-fl2v-common-head{display:flex;align-items:center;gap:6px;color:#ccc;cursor:pointer}
+.bd-fl2v-common-body{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.bd-fl2v-common-slots{width:250px;max-width:100%}
+.bd-fl2v-common-hint{font-size:10px;color:#999;line-height:1.4}
+.bd-fl2v-shot-title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#bbb;font-size:11px}
+.bd-fl2v-title{width:100%;box-sizing:border-box;background:#141414;border:1px solid #333;border-radius:4px;color:#eee;padding:6px;font:inherit}
+.bd-fl2v-shots.bd-fl2v-prompt-list{flex-direction:column;flex-wrap:nowrap;align-content:normal;align-items:stretch}
+.bd-fl2v-shot.common-images{width:100%;flex:0 0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:12px 14px;border-radius:10px}
+.bd-fl2v-shot.common-images .bd-fl2v-shot-head{grid-row:1;border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:6px}
+.bd-fl2v-shot.common-images .bd-fl2v-shot-foot{grid-row:2}
+.bd-fl2v-shot.common-images .bd-fl2v-title-row{grid-row:3;display:flex;align-items:center;gap:8px;color:#aaa}
+.bd-fl2v-shot.common-images .bd-fl2v-title-row>span{flex:0 0 auto}
+.bd-fl2v-shot.common-images .bd-batch-prompts{grid-row:4;min-width:0;display:flex;flex-direction:column}
+.bd-fl2v-shot.common-images .bd-batch-prompts textarea{width:100%;box-sizing:border-box;min-height:120px;resize:vertical;color:#eee;font-family:inherit}
 `;
 
 const DEFAULT_TOTAL = defaultFrameCount("fl2v");
@@ -187,13 +202,15 @@ export function newFl2vShot(overrides = {}) {
         ? Number(overrides.durationSec)
         : defaultDurationSec("fl2v");
     durationSec = clamp(roundDurationSec(durationSec), minDurationSec(), maxDurationSec());
+    const images = overrides.individualImages || overrides;
     const shot = {
         id: overrides.id || uid(),
+        title: String(overrides.title || ""),
         durationSec,
         prompt: overrides.prompt || "",
         negativePrompt: overrides.negativePrompt || DEFAULT_FL2V_NEGATIVE,
-        startImage: normalizeImageRef(overrides.startImage || overrides.start_image) || null,
-        endImage: normalizeImageRef(overrides.endImage || overrides.end_image) || null,
+        startImage: normalizeImageRef(images.startImage || images.start_image) || null,
+        endImage: normalizeImageRef(images.endImage || images.end_image) || null,
         ...(overrides.externalNodeId != null
             ? { externalNodeId: overrides.externalNodeId }
             : {}),
@@ -204,6 +221,19 @@ export function newFl2vShot(overrides = {}) {
         shot.continuityFromPrev = overrides.continuityFromPrev ?? overrides.continuity_from_prev;
     }
     return shot;
+}
+
+export function isFl2vCommonEnabled(editor) {
+    return !!editor.timeline?.fl2vCommon?.enabled
+        && !editor.hasExternalI2vGroups?.() && !editor.hasExternalR2vGroups?.();
+}
+
+function getFl2vImageTarget(editor, shotIndex) {
+    return shotIndex === -1 ? editor.timeline?.fl2vCommon : editor.timeline?.shots?.[shotIndex];
+}
+
+function effectiveFl2vImages(editor, shot) {
+    return isFl2vCommonEnabled(editor) ? editor.timeline.fl2vCommon : shot;
 }
 
 function shotFrameCount(shot, fps = 24) {
@@ -291,6 +321,7 @@ export function migrateLegacyFl2vToShots(timeline) {
         }
         shots.push(newFl2vShot({
             id: s.id,
+            title: s.title,
             durationSec,
             prompt: s.prompt || "",
             negativePrompt: s.negativePrompt || DEFAULT_FL2V_NEGATIVE,
@@ -309,10 +340,10 @@ export function flattenFl2vShotsToSegments(editor) {
     let cursor = 0;
     const segs = shots.map((shot, i) => {
         const fc = shotFrameCount(shot, fps);
-        const startImage = shot.startImage || null;
-        const endImage = shot.endImage || null;
+        const { startImage = null, endImage = null } = effectiveFl2vImages(editor, shot);
         const seg = {
             id: shot.id || uid(),
+            title: shot.title || "",
             start: cursor,
             length: fc,
             frameCount: fc,
@@ -358,8 +389,7 @@ export function flattenFl2vShotsToKeyframes(editor) {
     let cursor = 0;
     for (const shot of shots) {
         const fc = shotFrameCount(shot, fps);
-        const startImage = shot.startImage;
-        const endImage = shot.endImage;
+        const { startImage, endImage } = effectiveFl2vImages(editor, shot);
         const hasStart = !!startImage?.imageFile;
         const hasEnd = !!endImage?.imageFile;
         if (hasEnd && hasStart) {
@@ -758,10 +788,22 @@ export function mountFl2vPanel(parent) {
             <b data-i18n="panel.fl2v.howToTitle">怎么用</b>：
             <span data-i18n-html="panel.fl2v.hint"></span>
         </div>
+        <div class="bd-fl2v-common" data-r="fl2v-common">
+            <label class="bd-fl2v-common-head">
+                <input type="checkbox" data-r="fl2v-common-enabled">
+                <span data-i18n="panel.fl2v.commonEnable"></span>
+            </label>
+            <div class="bd-fl2v-common-body hidden" data-r="fl2v-common-body">
+                <div class="bd-fl2v-common-hint" data-i18n="panel.fl2v.commonHint"></div>
+                <div class="bd-fl2v-common-slots" data-r="fl2v-common-slots"></div>
+            </div>
+        </div>
         <div class="bd-fl2v-workbench" data-r="fl2v-workbench">
             <div class="bd-fl2v-shots" data-r="fl2v-shots"></div>
         </div>
         <div class="bd-fl2v-detail hidden" data-r="fl2v-detail">
+            <span class="bd-label" data-i18n="panel.fl2v.shotTitle"></span>
+            <input type="text" class="bd-fl2v-title" data-r="fl2v-title">
             <span class="bd-label" data-i18n="panel.fl2v.shotPrompt">本镜提示词</span>
             <textarea data-r="fl2v-prompt" data-i18n-placeholder="placeholder.fl2vShot" placeholder=""></textarea>
             <textarea data-r="fl2v-negative" class="hidden" hidden aria-hidden="true"></textarea>
@@ -775,8 +817,13 @@ export function mountFl2vPanel(parent) {
         root: wrap,
         hint: wrap.querySelector(".bd-fl2v-hint"),
         workbench: wrap.querySelector('[data-r="fl2v-workbench"]'),
+        common: wrap.querySelector('[data-r="fl2v-common"]'),
+        commonEnabled: wrap.querySelector('[data-r="fl2v-common-enabled"]'),
+        commonBody: wrap.querySelector('[data-r="fl2v-common-body"]'),
+        commonSlots: wrap.querySelector('[data-r="fl2v-common-slots"]'),
         shotsEl: wrap.querySelector('[data-r="fl2v-shots"]'),
         detail: wrap.querySelector('[data-r="fl2v-detail"]'),
+        title: wrap.querySelector('[data-r="fl2v-title"]'),
         prompt: wrap.querySelector('[data-r="fl2v-prompt"]'),
         negative: wrap.querySelector('[data-r="fl2v-negative"]'),
         totalInput: null,
@@ -830,12 +877,22 @@ export function stripFl2vPromptBody(text) {
 export function flushFl2vPromptDraft(editor) {
     if (editor?._suspendPromptFlush) return;
     const ui = editor?.fl2vUi;
-    if (!ui?.prompt && !ui?.negative) return;
     const shots = editor.timeline?.shots || [];
-    const idx = editor._fl2vPromptSegIndex;
-    if (!Number.isFinite(idx) || idx < 0 || idx >= shots.length) return;
-    const shot = shots[idx];
+    const fields = ui?.shotsEl?.querySelectorAll("[data-fl2v-shot-field]");
+    if (fields?.length) {
+        for (const field of fields) {
+            const shot = shots.find((item) => item.id === field.dataset.fl2vShotId);
+            if (shot) shot[field.dataset.fl2vShotField] = field.value || "";
+        }
+        return;
+    }
+    if ((!ui?.prompt && !ui?.negative) || ui.detail?.classList.contains("hidden")) return;
+    const index = editor._fl2vPromptSegIndex;
+    const shot = editor._fl2vPromptShotId
+        ? shots.find((item) => item.id === editor._fl2vPromptShotId)
+        : shots[index];
     if (!shot) return;
+    if (ui.title) shot.title = ui.title.value || "";
     if (ui.prompt) shot.prompt = ui.prompt.value || "";
     if (ui.negative) shot.negativePrompt = ui.negative.value || "";
 }
@@ -956,14 +1013,14 @@ function bindFl2vShotCardDnD(editor, cardEl, shotIndex) {
 }
 
 function clearFl2vShotSlot(editor, shotIndex, kind) {
-    const shot = editor.timeline?.shots?.[shotIndex];
+    const shot = getFl2vImageTarget(editor, shotIndex);
     if (!shot) return;
     // Suppress the post-clear click that can land on the rebuilt empty slot.
     editor._fl2vIgnoreSlotClickUntil = Date.now() + 500;
     if (kind === "start") shot.startImage = null;
     else shot.endImage = null;
     syncFl2vFromShots(editor);
-    editor.selectedIndex = shotIndex;
+    if (shotIndex >= 0) editor.selectedIndex = shotIndex;
     editor.commit?.(false, { syncTimeline: true });
     updateFl2vDetailUI(editor);
     editor.updateVideoNameLabel?.();
@@ -991,8 +1048,7 @@ function setFl2vSlotImage(shot, slot, ref) {
 }
 
 async function pickFl2vSlotImage(editor, shotIndex, slotKind) {
-    const shots = editor.timeline?.shots || [];
-    const shot = shots[shotIndex];
+    const shot = getFl2vImageTarget(editor, shotIndex);
     const currentValue = slotKind === "end"
         ? (shot?.endImage?.imageFile || "")
         : (shot?.startImage?.imageFile || "");
@@ -1001,7 +1057,7 @@ async function pickFl2vSlotImage(editor, shotIndex, slotKind) {
         currentValue,
     });
     if (!picked?.imageFile) return false;
-    let liveShot = shots[shotIndex];
+    let liveShot = getFl2vImageTarget(editor, shotIndex);
     if (!liveShot) {
         addFl2vShot(editor);
         liveShot = editor.timeline?.shots?.[editor.timeline.shots.length - 1];
@@ -1014,7 +1070,7 @@ async function pickFl2vSlotImage(editor, shotIndex, slotKind) {
         height: picked.height || 0,
     });
     syncFl2vFromShots(editor);
-    editor.selectedIndex = Math.min(shotIndex, Math.max(0, (editor.timeline?.shots?.length || 1) - 1));
+    if (shotIndex >= 0) editor.selectedIndex = Math.min(shotIndex, Math.max(0, (editor.timeline?.shots?.length || 1) - 1));
     editor.commit?.(false, { syncTimeline: true });
     updateFl2vDetailUI(editor);
     editor.updateVideoNameLabel?.();
@@ -1025,9 +1081,8 @@ async function pickFl2vSlotImage(editor, shotIndex, slotKind) {
 
 /** Same group: swap/move; cross group: copy/replace target. */
 export function transferFl2vSlotImage(editor, fromShot, fromSlot, toShot, toSlot) {
-    const shots = editor.timeline?.shots || [];
-    const src = shots[fromShot];
-    const dst = shots[toShot];
+    const src = getFl2vImageTarget(editor, fromShot);
+    const dst = getFl2vImageTarget(editor, toShot);
     if (!src || !dst) return false;
     if (fromShot === toShot && fromSlot === toSlot) return false;
     const srcImg = getFl2vSlotImage(src, fromSlot);
@@ -1043,7 +1098,7 @@ export function transferFl2vSlotImage(editor, fromShot, fromSlot, toShot, toSlot
         setFl2vSlotImage(dst, toSlot, cloneFl2vImageRef(srcImg));
     }
     syncFl2vFromShots(editor);
-    editor.selectedIndex = toShot;
+    if (toShot >= 0) editor.selectedIndex = toShot;
     editor.commit?.(false, { syncTimeline: true });
     updateFl2vDetailUI(editor);
     editor.updateVideoNameLabel?.();
@@ -1117,7 +1172,7 @@ function bindFl2vSlotDnD(editor, slotEl, shotIndex, slotKind) {
         }
         const f = e.dataTransfer.files?.[0];
         if (f?.type?.startsWith("image/")) {
-            editor.selectedIndex = shotIndex;
+            if (shotIndex >= 0) editor.selectedIndex = shotIndex;
             editor._fl2vUploadMode = "slot";
             editor._fl2vSlotKind = slotKind;
             editor._fl2vSlotShotIndex = shotIndex;
@@ -1131,11 +1186,11 @@ function bindFl2vSlotDnD(editor, slotEl, shotIndex, slotKind) {
                     const sub = (up.subfolder || "").replace(/\\/g, "/").replace(/\/$/, "");
                     const path = sub ? `${sub}/${name}` : name;
                     const ref = { imageFile: path, width: dims.width || 0, height: dims.height || 0 };
-                    const shot = editor.timeline.shots?.[shotIndex];
+                    const shot = getFl2vImageTarget(editor, shotIndex);
                     if (!shot) return;
                     setFl2vSlotImage(shot, slotKind, ref);
                     syncFl2vFromShots(editor);
-                    editor.selectedIndex = shotIndex;
+                    if (shotIndex >= 0) editor.selectedIndex = shotIndex;
                     editor.commit?.(false, { syncTimeline: true });
                     updateFl2vDetailUI(editor);
                     editor.updateVideoNameLabel?.();
@@ -1154,18 +1209,23 @@ function renderFl2vShotCards(editor) {
     if (!ui?.shotsEl) return;
     applyFl2vSlotAspect(editor);
     const shots = editor.timeline.shots || [];
+    const commonEnabled = isFl2vCommonEnabled(editor);
     const scrollTop = ui.shotsEl.scrollTop;
+    ui.shotsEl.classList.toggle("bd-fl2v-prompt-list", commonEnabled);
     ui.shotsEl.innerHTML = "";
     shots.forEach((shot, i) => {
         const card = document.createElement("div");
         card.className = "bd-fl2v-shot" + (i === editor.selectedIndex ? " selected" : "");
         card.dataset.shotIndex = String(i);
+        card.classList.toggle("common-images", commonEnabled);
+        if (commonEnabled) card.classList.add("bd-batch-card", "bd-batch-plain");
+        const { startImage, endImage } = effectiveFl2vImages(editor, shot);
         const fc = shotFrameCount(shot, fl2vFps(editor));
-        const badge = shot.startImage?.imageFile && shot.endImage?.imageFile
+        const badge = startImage?.imageFile && endImage?.imageFile
             ? t("fl2v.badge.startEnd")
-            : (shot.endImage?.imageFile && !shot.startImage?.imageFile
+            : (endImage?.imageFile && !startImage?.imageFile
                 ? t("fl2v.badge.endOnly")
-                : (shot.startImage?.imageFile
+                : (startImage?.imageFile
                     ? t("fl2v.badge.i2v")
                     : t("fl2v.badge.t2v")));
         const masterCont = isContinuityMasterEnabled(editor.timeline?.output);
@@ -1177,7 +1237,13 @@ function renderFl2vShotCards(editor) {
                 ${showCont ? `<div class="bd-fl2v-shot-cont"><label class="bd-fl2v-continuity" draggable="false" title="${t("tooltip.segmentContinuityFromPrev")}"><input type="checkbox" data-r="shot-continuity" ${contChecked ? "checked" : ""}><span>${t("batch.continuityFromPrev")}</span></label></div>` : ""}
                 <span class="bd-fl2v-shot-meta">${badge} · ${fc}f</span>
             </div>
-            ${createFl2vSlotPair({ startImage: shot.startImage, endImage: shot.endImage }).outerHTML}
+            ${commonEnabled ? `
+                <label class="bd-fl2v-title-row"><span>${t("panel.fl2v.shotTitle")}</span><input type="text" class="bd-fl2v-title" data-fl2v-shot-field="title"></label>
+                <div class="bd-batch-prompts">
+                    <span class="bd-label">${t("batch.prompt")}</span>
+                    <textarea data-fl2v-shot-field="prompt"></textarea>
+                </div>
+            ` : `<div class="bd-fl2v-shot-title"></div>${createFl2vSlotPair({ startImage, endImage }).outerHTML}`}
             <div class="bd-fl2v-shot-foot">
                 <label class="bd-fl2v-shot-row" title="${t("tooltip.fl2vShotDuration")}">
                     ${t("panel.fl2v.duration")}
@@ -1187,8 +1253,39 @@ function renderFl2vShotCards(editor) {
                 <button type="button" class="bd-r2v-pick-existing" data-a="fl2v-pick-existing" title="${t("mediaPicker.pickExistingHint")}">${t("mediaPicker.pickExisting")}</button>
             </div>
         `;
+        const title = card.querySelector(".bd-fl2v-shot-title");
+        if (title) {
+            title.textContent = shot.title || "";
+            title.title = shot.title || "";
+            title.classList.toggle("hidden", !shot.title);
+        }
+        card.querySelectorAll("[data-fl2v-shot-field]").forEach((field) => {
+            const name = field.dataset.fl2vShotField;
+            field.dataset.fl2vShotId = shot.id;
+            field.value = shot[name] || "";
+            if (name === "prompt") field.placeholder = t("placeholder.batchDefault");
+            field.addEventListener("keydown", (event) => event.stopPropagation());
+            field.addEventListener("focus", () => {
+                const index = editor.timeline.shots.findIndex((item) => item.id === field.dataset.fl2vShotId);
+                if (index < 0) return;
+                editor.selectedIndex = index;
+                for (const item of ui.shotsEl.querySelectorAll(".bd-fl2v-shot")) {
+                    item.classList.toggle("selected", Number(item.dataset.shotIndex) === index);
+                }
+                editor.scheduleRender?.();
+            });
+            field.addEventListener("input", () => {
+                const live = editor.timeline.shots.find((item) => item.id === field.dataset.fl2vShotId);
+                if (!live) return;
+                live[name] = field.value || "";
+                const segment = editor.timeline.segments?.find((item) => item.id === live.id);
+                if (segment) segment[name] = live[name];
+                editor.scheduleTimelineSync?.();
+                editor._schedulePromptRender?.();
+            });
+        });
         card.addEventListener("click", (e) => {
-            if (e.target.closest("[data-slot], [data-clear], input, .bd-fl2v-slot-wrap, .bd-fl2v-continuity, .bd-fl2v-shot-cont, [data-a='fl2v-pick-existing']")) return;
+            if (e.target.closest("[data-slot], [data-clear], input, textarea, .bd-batch-prompts, .bd-fl2v-title-row, .bd-fl2v-slot-wrap, .bd-fl2v-continuity, .bd-fl2v-shot-cont, [data-a='fl2v-pick-existing']")) return;
             if (editor._fl2vShotDrag || editor._fl2vSlotDrag) return;
             if (editor.selectedIndex !== i) flushFl2vPromptDraft(editor);
             editor.selectedIndex = i;
@@ -1231,6 +1328,7 @@ function renderFl2vShotCards(editor) {
         }
         bindFl2vShotCardDnD(editor, card, i);
         const pickBtn = card.querySelector('[data-a="fl2v-pick-existing"]');
+        pickBtn?.classList.toggle("hidden", commonEnabled);
         if (pickBtn) {
             const bothFilled = !!(shot.startImage?.imageFile && shot.endImage?.imageFile);
             pickBtn.disabled = bothFilled;
@@ -1248,6 +1346,7 @@ function renderFl2vShotCards(editor) {
             });
         }
         card.querySelectorAll("[data-slot]").forEach((slot) => {
+            if (commonEnabled) return;
             const kind = slot.dataset.slot;
             bindFl2vSlotDnD(editor, slot, i, kind);
             slot.addEventListener("click", (e) => {
@@ -1266,6 +1365,10 @@ function renderFl2vShotCards(editor) {
             });
         });
         card.querySelectorAll("[data-clear]").forEach((btn) => {
+            if (commonEnabled) {
+                btn.remove();
+                return;
+            }
             // Clear on pointerdown: click is unreliable next to HTML5 drag sources.
             btn.addEventListener("pointerdown", (e) => {
                 e.preventDefault();
@@ -1294,6 +1397,45 @@ function renderFl2vShotCards(editor) {
     ui.shotsEl.scrollTop = scrollTop;
 }
 
+function renderFl2vCommonPanel(editor) {
+    const ui = editor.fl2vUi;
+    if (!ui?.common) return;
+    const external = !!(editor.hasExternalI2vGroups?.() || editor.hasExternalR2vGroups?.());
+    const enabled = isFl2vCommonEnabled(editor);
+    ui.common.classList.toggle("hidden", external);
+    ui.commonEnabled.checked = enabled;
+    ui.commonBody.classList.toggle("hidden", !enabled);
+    ui.commonSlots.replaceChildren();
+    if (!enabled) return;
+    const common = editor.timeline.fl2vCommon;
+    const slots = createFl2vSlotPair(common);
+    slots.querySelectorAll("[data-slot]").forEach((slot) => {
+        const kind = slot.dataset.slot;
+        bindFl2vSlotDnD(editor, slot, -1, kind);
+        slot.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            if (Date.now() < (editor._fl2vIgnoreSlotClickUntil || 0) || editor._fl2vSlotDrag) return;
+            try {
+                await pickFl2vSlotImage(editor, -1, kind);
+            } catch (error) {
+                alert(t("upload.alertFailed", { err: error.message || error }));
+            }
+        });
+    });
+    slots.querySelectorAll("[data-clear]").forEach((button) => {
+        button.addEventListener("pointerdown", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            clearFl2vShotSlot(editor, -1, button.dataset.clear);
+        });
+        button.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        });
+    });
+    ui.commonSlots.appendChild(slots);
+}
+
 export function updateFl2vDetailUI(editor) {
     const ui = editor.fl2vUi;
     if (!ui) return;
@@ -1301,13 +1443,21 @@ export function updateFl2vDetailUI(editor) {
         ui.detail?.classList.add("hidden");
         return;
     }
+    flushFl2vPromptDraft(editor);
     if (ui.totalInput && ui.totalInput !== document.activeElement) {
         ui.totalInput.value = String(getFl2vTotalDurationSec(editor));
         ui.totalInput.disabled = true;
         ui.totalInput.title = t("tooltip.fl2vTotalInput");
     }
+    renderFl2vCommonPanel(editor);
     renderFl2vShotCards(editor);
     updateFl2vToolbarBtns(editor);
+    if (isFl2vCommonEnabled(editor)) {
+        ui.detail?.classList.add("hidden");
+        editor._fl2vPromptSegIndex = null;
+        editor._fl2vPromptShotId = null;
+        return;
+    }
 
     const shots = editor.timeline.shots || [];
     const idx = editor.selectedIndex;
@@ -1315,14 +1465,18 @@ export function updateFl2vDetailUI(editor) {
     if (!shot) {
         flushFl2vPromptDraft(editor);
         editor._fl2vPromptSegIndex = null;
+        editor._fl2vPromptShotId = null;
         ui.detail?.classList.add("hidden");
         return;
     }
     ui.detail?.classList.remove("hidden");
-    const prevIdx = editor._fl2vPromptSegIndex;
-    const selectionChanged = prevIdx !== idx;
+    const selectionChanged = editor._fl2vPromptShotId !== shot.id;
     if (selectionChanged) flushFl2vPromptDraft(editor);
     editor._fl2vPromptSegIndex = idx;
+    editor._fl2vPromptShotId = shot.id;
+    if (ui.title && (selectionChanged || ui.title !== document.activeElement)) {
+        ui.title.value = shot.title || "";
+    }
     if (ui.prompt) {
         ui.prompt.disabled = false;
         if (selectionChanged || ui.prompt !== document.activeElement) {
@@ -1342,12 +1496,29 @@ export function bindFl2vEvents(editor) {
     if (!ui) return;
 
     ui.shotsEl?.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+    ui.common?.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+    ui.commonEnabled?.addEventListener("change", () => {
+        flushFl2vPromptDraft(editor);
+        if (!editor.timeline.fl2vCommon) {
+            const selected = editor.timeline.shots?.[editor.selectedIndex];
+            editor.timeline.fl2vCommon = {
+                startImage: cloneFl2vImageRef(selected?.startImage),
+                endImage: cloneFl2vImageRef(selected?.endImage),
+            };
+        }
+        editor.timeline.fl2vCommon.enabled = ui.commonEnabled.checked;
+        syncFl2vFromShots(editor);
+        editor.commit(false, { syncTimeline: true });
+        updateFl2vDetailUI(editor);
+        editor.updateDomWidgetHeight?.();
+    });
 
     // Total is read-only (sum of shots); ignore edits.
     ui.totalInput?.addEventListener("keydown", (e) => e.stopPropagation());
 
     const promptTargetShot = () => {
         const shots = editor.timeline.shots || [];
+        if (editor._fl2vPromptShotId) return shots.find((shot) => shot.id === editor._fl2vPromptShotId) || null;
         const idx = Number.isFinite(editor._fl2vPromptSegIndex)
             ? editor._fl2vPromptSegIndex
             : editor.selectedIndex;
@@ -1376,6 +1547,7 @@ export function bindFl2vEvents(editor) {
         });
     };
     bindPromptField(ui.prompt, "prompt");
+    bindPromptField(ui.title, "title");
     bindPromptField(ui.negative, "negativePrompt");
 
     ui.fileInput?.addEventListener("change", async () => {
@@ -1399,7 +1571,7 @@ export function bindFl2vEvents(editor) {
             const ref = { imageFile: path, width: dims.width || 0, height: dims.height || 0 };
             let shots = editor.timeline.shots || [];
             if (mode === "slot") {
-                let shot = shots[shotIndex];
+                let shot = getFl2vImageTarget(editor, shotIndex);
                 if (!shot) {
                     addFl2vShot(editor);
                     shots = editor.timeline.shots;
@@ -1408,7 +1580,7 @@ export function bindFl2vEvents(editor) {
                 }
                 if (slotKind === "end") shot.endImage = ref;
                 else shot.startImage = ref;
-                editor.selectedIndex = shotIndex < shots.length ? shotIndex : shots.length - 1;
+                if (shotIndex >= 0) editor.selectedIndex = shotIndex < shots.length ? shotIndex : shots.length - 1;
             } else {
                 addFl2vShot(editor, { startImage: ref });
             }
@@ -1553,37 +1725,36 @@ export function drawFl2vSegmentThumbnails(editor, ctx, seg, startX, pxWidth, y0,
 
 export function getFl2vUiHeight(editor) {
     const n = editor.timeline?.shots?.length || 0;
-    const rows = Math.max(1, Math.ceil(n / 3));
-    const shotsH = Math.min(rows * 150, FL2V_SHOTS_MAX_H);
+    const commonEnabled = isFl2vCommonEnabled(editor);
+    const rows = Math.max(1, commonEnabled ? n : Math.ceil(n / 3));
+    const shotsH = Math.min(rows * (commonEnabled ? 280 : 150), FL2V_SHOTS_MAX_H);
     const previewH = editor?.needsLiveSamplePanel?.() ? 320 : 0;
-    return 420 + Math.max(shotsH, previewH) + 80;
+    const commonH = isFl2vCommonEnabled(editor) ? 200 : 36;
+    return 420 + Math.max(shotsH, previewH) + 80 + commonH;
 }
 
 export function buildFl2vPayloadFields(editor) {
     ensureFl2vTimeline(editor);
     syncFl2vFromShots(editor);
     const total = getFl2vSampleFrames(editor);
-    const shots = (editor.timeline.shots || []).map((s, i) => ({
-        id: s.id,
-        durationSec: s.durationSec,
-        prompt: s.prompt || "",
-        negativePrompt: s.negativePrompt || DEFAULT_FL2V_NEGATIVE,
-        continuityFromPrev: isSegmentContinuityFromPrev(s, i),
-        startImage: s.startImage
-            ? {
-                imageFile: s.startImage.imageFile || "",
-                width: s.startImage.width || 0,
-                height: s.startImage.height || 0,
-            }
-            : null,
-        endImage: s.endImage
-            ? {
-                imageFile: s.endImage.imageFile || "",
-                width: s.endImage.width || 0,
-                height: s.endImage.height || 0,
-            }
-            : null,
-    }));
+    const commonEnabled = isFl2vCommonEnabled(editor);
+    const shots = (editor.timeline.shots || []).map((shot, index) => {
+        const images = effectiveFl2vImages(editor, shot);
+        return {
+            id: shot.id,
+            title: shot.title || "",
+            ...(commonEnabled ? { individualImages: {
+                startImage: cloneFl2vImageRef(shot.startImage),
+                endImage: cloneFl2vImageRef(shot.endImage),
+            } } : {}),
+            durationSec: shot.durationSec,
+            prompt: shot.prompt || "",
+            negativePrompt: shot.negativePrompt || DEFAULT_FL2V_NEGATIVE,
+            continuityFromPrev: isSegmentContinuityFromPrev(shot, index),
+            startImage: cloneFl2vImageRef(images.startImage),
+            endImage: cloneFl2vImageRef(images.endImage),
+        };
+    });
     return {
         timelineMode: "fl2v",
         editMode: "segment",
@@ -1591,6 +1762,7 @@ export function buildFl2vPayloadFields(editor) {
         keyframes: editor.timeline.keyframes || [],
         segments: (editor.timeline.segments || []).map((s, i) => ({
             id: s.id,
+            title: s.title || "",
             start: s.start,
             length: s.length,
             frameCount: s.length,

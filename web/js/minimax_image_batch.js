@@ -388,10 +388,15 @@ export function flushBatchPromptInputs(editor) {
         live.seg.prompt = el.value || "";
         live.seg.negativePrompt = live.seg.negativePrompt ?? "";
     });
+    list.querySelectorAll("input[data-batch-title-index]").forEach((input) => {
+        const live = liveBatchSegmentFromEl(editor, input, "data-batch-title-index");
+        if (live?.seg) live.seg.title = input.value || "";
+    });
 }
 
 /** Flush visible 秒数 inputs into segments before a full card re-render. */
 function flushBatchDurationInputs(editor) {
+    if (editor?._suspendPromptFlush) return;
     const list = editor?.batchList;
     if (!list) return;
     // Persist prompts first — duration apply/normalize must not drop textarea drafts.
@@ -493,6 +498,9 @@ export const IMAGE_BATCH_STYLES = `
 .bd-batch-head{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-start;gap:8px;flex-wrap:wrap}
 .bd-batch-r2v .bd-batch-head{padding-bottom:2px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:2px;flex-shrink:0}
 .bd-batch-head b{color:#ccc;font-size:11px}
+.bd-batch-title{display:flex;align-items:center;gap:6px;flex:1 1 180px;min-width:140px;max-width:420px;color:#aaa;font-size:11px}
+.bd-batch-title span{flex-shrink:0}
+.bd-batch-title input{flex:1;min-width:0;width:100%;box-sizing:border-box;background:#141414;border:1px solid #333;border-radius:5px;color:#eee;padding:5px 7px;font:inherit}
 .bd-batch-r2v .bd-batch-head b{color:#f0f0f0;font-size:13px;font-weight:650;letter-spacing:.02em}
 .bd-batch-run-check{width:14px;height:14px;margin:0;cursor:pointer;accent-color:#4fff8f;flex-shrink:0}
 .bd-batch-continuity{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#9ab;cursor:pointer;user-select:none;flex-shrink:0}
@@ -2577,6 +2585,8 @@ function renderBatchGroupPicker(editor, ctx) {
         const title = document.createElement("span");
         const segKey = key === "mixed" ? resolveSegmentTaskKey(seg, key) : key;
         title.textContent = t(segKey === "r2v" ? "batch.groupTitle.asset" : "batch.groupTitle.prompt", { n: index + 1 });
+        if (seg.title) title.textContent += ` · ${seg.title}`;
+        title.title = seg.title || "";
         if (key === "mixed") title.textContent = `${title.textContent} · ${segKey}`;
         head.appendChild(title);
         chip.appendChild(head);
@@ -2738,7 +2748,36 @@ function appendBatchCard(list, editor, seg, index, ctx) {
         }
         const title = document.createElement("b");
         title.textContent = t(isR2v ? "batch.groupTitle.asset" : "batch.groupTitle.prompt", { n: index + 1 });
+        if (seg.title) title.textContent += ` · ${seg.title}`;
+        title.title = seg.title || "";
         head.appendChild(title);
+        if (isVideo) {
+            const titleRow = document.createElement("label");
+            titleRow.className = "bd-batch-title";
+            const titleLabel = document.createElement("span");
+            titleLabel.textContent = t("batch.title");
+            const titleInput = document.createElement("input");
+            titleInput.type = "text";
+            titleInput.value = seg.title || "";
+            titleInput.placeholder = t("batch.titlePlaceholder");
+            titleInput.setAttribute("data-batch-title-index", String(index));
+            titleInput.setAttribute("data-batch-seg-id", seg.id || "");
+            titleInput.addEventListener("keydown", (event) => event.stopPropagation());
+            titleRow.addEventListener("click", (event) => event.stopPropagation());
+            titleInput.addEventListener("input", () => {
+                const live = liveBatchSegmentFromEl(editor, titleInput, "data-batch-title-index");
+                if (!live?.seg) return;
+                live.seg.title = titleInput.value || "";
+                const defaultTitle = t(isR2v ? "batch.groupTitle.asset" : "batch.groupTitle.prompt", { n: live.index + 1 });
+                title.textContent = live.seg.title ? `${defaultTitle} · ${live.seg.title}` : defaultTitle;
+                title.title = live.seg.title;
+                editor.scheduleTimelineSync?.();
+                editor._schedulePromptRender?.();
+            });
+            titleInput.addEventListener("change", () => renderBatchGroupPicker(editor, ctx));
+            titleRow.append(titleLabel, titleInput);
+            head.appendChild(titleRow);
+        }
         if (isMixed && !externalLocked) {
             const taskRow = document.createElement("label");
             taskRow.className = "bd-batch-segtask";

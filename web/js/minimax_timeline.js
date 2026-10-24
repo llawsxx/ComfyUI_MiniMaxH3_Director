@@ -113,6 +113,7 @@ import {
     toggleLocale,
 } from "./minimax_i18n.js";
 import { bindPackActions } from "./minimax_pack.js";
+import { bindPromptImport, PROMPT_IMPORT_STYLES, syncPromptImportButton } from "./minimax_prompt_import.js";
 import {
     attachExternalGroupsWitness,
     injectExternalGroupsWitness,
@@ -1404,6 +1405,7 @@ const STYLES = `
 .bd-gen-fc-row{display:flex;align-items:center;gap:6px;margin-top:6px}
 ${IMAGE_BATCH_STYLES}
 ${FL2V_STYLES}
+${PROMPT_IMPORT_STYLES}
 @media(max-width:768px){
 .bd-prompt-layout,.bd-prompt-layout.bd-rv2v-layout,.bd-prompt-layout.bd-v2v-layout,.bd-prompt-layout.bd-v2v-layout.bd-v2v-with-live{grid-template-columns:1fr}
 .bd-prompt-layout.bd-v2v-layout.bd-v2v-with-live>.bd-live-sample{order:3;min-height:160px}
@@ -2445,13 +2447,22 @@ class MiniMaxH3DirectorEditor {
 
     /** Mirror graph-wired Group count/duration into the Director timeline UI. */
     syncExternalGroupsTimeline() {
+        syncPromptImportButton(this);
         this.updateExternalGroupsBanner();
         // Keep any in-progress Director textarea edits before rebuilding from graph.
         if (this.isImageBatch?.()) flushBatchPromptInputs(this);
         if (this.isFl2vMode?.()) flushFl2vPromptDraft(this);
         const specs = collectExternalGroupSpecs(this);
         if (!specs?.length) {
+            const hadExternalGroups = this._externalGroupsSyncSig != null;
             this._externalGroupsSyncSig = null;
+            if (hadExternalGroups && this.isFl2vMode?.()) {
+                syncFl2vFromShots(this);
+                updateFl2vDetailUI(this);
+                this.updateDomWidgetHeight?.();
+                this.scheduleTimelineSync?.();
+                this.scheduleRender?.();
+            }
             return;
         }
 
@@ -2495,6 +2506,7 @@ class MiniMaxH3DirectorEditor {
                     || (matched ? String(matched.prompt || "").trim() : "");
                 return newFl2vShot({
                     id: matched?.id,
+                    title: matched?.title || "",
                     durationSec: spec.durationSec ?? defaultDurationSec("fl2v"),
                     prompt,
                     externalNodeId: spec.nodeId ?? null,
@@ -2583,6 +2595,7 @@ class MiniMaxH3DirectorEditor {
                 }
                 return newBatchSegment({
                     ...(matched?.id ? { id: matched.id } : {}),
+                    title: matched?.title || "",
                     frameRate: this.getFrameRate(),
                     durationSec: spec.durationSec ?? defaultDurationSec(taskKey),
                     prompt,
@@ -2813,6 +2826,7 @@ class MiniMaxH3DirectorEditor {
                     const clean = sanitizeSegmentForPayload(s);
                     return {
                         id: clean.id,
+                        title: clean.title || "",
                         start: clean.start,
                         length: clean.frameCount ?? clean.length ?? 1,
                         frameCount: clean.frameCount ?? clean.length ?? 1,
@@ -3005,6 +3019,7 @@ class MiniMaxH3DirectorEditor {
                         <button type="button" class="bd-btn bd-btn-zoom" data-a="zoom-toggle" data-i18n="toolbar.timelineZoom" data-i18n-title="toolbar.timelineZoomTitle">放大</button>
                         <input type="range" class="bd-tl-zoom-slider hidden" data-r="zoom" min="1" max="10" step="any" value="1" data-i18n-title="tooltip.timelineZoom">
                     </div>
+                    <button type="button" class="bd-btn hidden" data-a="prompt-import" data-i18n="toolbar.importPrompts" data-i18n-title="tooltip.importPrompts"></button>
                     <button type="button" class="bd-btn" data-a="pack-import" data-i18n="toolbar.importPack" data-i18n-title="tooltip.importPack">导入导演包</button>
                     <button type="button" class="bd-btn" data-a="pack-export" data-i18n="toolbar.exportPack" data-i18n-title="tooltip.exportPack">导出导演包</button>
                     <button type="button" class="bd-btn" data-a="lang-toggle" data-i18n="toolbar.langToggle" data-i18n-title="toolbar.langToggleTitle">EN</button>
@@ -3578,6 +3593,7 @@ class MiniMaxH3DirectorEditor {
         bind('[data-a="lang-toggle"]', () => toggleLocale());
         bind('[data-a="zoom-toggle"]', () => this.toggleTimelineZoom());
         bindPackActions(this);
+        bindPromptImport(this);
         bind('[data-a="play"]', () => this.togglePlay());
         bind('[data-a="loop"]', () => this.toggleLoop());
         bind('[data-a="live-tae-preview"]', () => this.toggleLiveTaePreview());
@@ -5235,6 +5251,7 @@ class MiniMaxH3DirectorEditor {
         this.batchPanel?.classList.toggle("hidden", !isBatch);
         this.root?.classList.toggle("bd-batch-fill", !!isBatch);
         this.root?.classList.toggle("bd-fl2v-fill", !!isFl2v);
+        syncPromptImportButton(this);
         this.fl2vUi?.root?.classList.toggle("hidden", !isFl2v);
         this.fl2vTotalWrap?.classList.toggle("hidden", !isFl2v);
         if (isFl2v) {
@@ -10555,7 +10572,7 @@ class MiniMaxH3DirectorEditor {
     }
 
     drawPromptOverlay(ctx, seg, startX, pxWidth, y0, h) {
-        const prompt = this.getDisplayPrompt(seg);
+        const prompt = seg?.title || this.getDisplayPrompt(seg);
         if (!prompt || pxWidth < 24) return;
         const overlayH = Math.round(h * 0.22);
         const overlayY = y0 + h - overlayH;
