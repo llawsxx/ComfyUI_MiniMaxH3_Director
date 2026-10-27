@@ -114,6 +114,7 @@ import {
 } from "./minimax_i18n.js";
 import { bindPackActions } from "./minimax_pack.js";
 import { bindPromptImport, PROMPT_IMPORT_STYLES, syncPromptImportButton } from "./minimax_prompt_import.js";
+import { cloneGuideFrames, createGuideFramesEditor, GUIDE_FRAME_STYLES } from "./minimax_guide_frames.js";
 import {
     attachExternalGroupsWitness,
     injectExternalGroupsWitness,
@@ -391,6 +392,7 @@ function sanitizeBatchGlobalCommon(gc) {
         commonEnabled: !!src.commonEnabled,
         commonCollapsed: !!src.commonCollapsed,
         prompt: src.prompt || "",
+        guideFrames: cloneGuideFrames(src.guideFrames),
         refs: Array.isArray(src.refs) ? src.refs.map(sanitizeRefImage) : [],
         refAudios: Array.isArray(src.refAudios) ? src.refAudios.map(sanitizeRefAudio) : [],
         refVideos: Array.isArray(src.refVideos)
@@ -1406,6 +1408,7 @@ const STYLES = `
 ${IMAGE_BATCH_STYLES}
 ${FL2V_STYLES}
 ${PROMPT_IMPORT_STYLES}
+${GUIDE_FRAME_STYLES}
 @media(max-width:768px){
 .bd-prompt-layout,.bd-prompt-layout.bd-rv2v-layout,.bd-prompt-layout.bd-v2v-layout,.bd-prompt-layout.bd-v2v-layout.bd-v2v-with-live{grid-template-columns:1fr}
 .bd-prompt-layout.bd-v2v-layout.bd-v2v-with-live>.bd-live-sample{order:3;min-height:160px}
@@ -2507,6 +2510,7 @@ class MiniMaxH3DirectorEditor {
                 return newFl2vShot({
                     id: matched?.id,
                     title: matched?.title || "",
+                    guideFrames: cloneGuideFrames(matched?.guideFrames),
                     durationSec: spec.durationSec ?? defaultDurationSec("fl2v"),
                     prompt,
                     externalNodeId: spec.nodeId ?? null,
@@ -2596,6 +2600,7 @@ class MiniMaxH3DirectorEditor {
                 return newBatchSegment({
                     ...(matched?.id ? { id: matched.id } : {}),
                     title: matched?.title || "",
+                    guideFrames: cloneGuideFrames(matched?.guideFrames),
                     frameRate: this.getFrameRate(),
                     durationSec: spec.durationSec ?? defaultDurationSec(taskKey),
                     prompt,
@@ -2827,6 +2832,7 @@ class MiniMaxH3DirectorEditor {
                     return {
                         id: clean.id,
                         title: clean.title || "",
+                        guideFrames: cloneGuideFrames(clean.guideFrames),
                         start: clean.start,
                         length: clean.frameCount ?? clean.length ?? 1,
                         frameCount: clean.frameCount ?? clean.length ?? 1,
@@ -3262,6 +3268,7 @@ class MiniMaxH3DirectorEditor {
                     </div>
                 </div>
                 <div class="bd-r2v-common-body" data-r="r2v-common-body">
+                    <div data-r="r2v-common-guides" class="hidden"></div>
                     <div class="bd-meta bd-r2v-common-hint hidden" data-r="r2v-common-hint" data-i18n="panel.r2vCommonHint">公共参考图/视频/音频供各组读取；公共提示词会与每组提示词拼接成完整提示词。同槽位以组内素材优先。</div>
                     <div class="bd-prompt-layout" data-r="global-prompt-layout">
                         <div class="bd-refs-col" data-r="global-refs-col">
@@ -4651,6 +4658,7 @@ class MiniMaxH3DirectorEditor {
                 refs: cloneJson(g.refs, []),
                 refAudios: cloneJson(g.refAudios || g.ref_audios, []),
                 refVideos: cloneJson(g.refVideos || g.ref_videos, []),
+                guideFrames: cloneGuideFrames(g.guideFrames),
             },
         };
     }
@@ -4679,6 +4687,7 @@ class MiniMaxH3DirectorEditor {
         this.timeline.global.refs = cloneJson(gc.refs, []);
         this.timeline.global.refAudios = cloneJson(gc.refAudios, []);
         this.timeline.global.refVideos = cloneJson(gc.refVideos, []);
+        this.timeline.global.guideFrames = cloneGuideFrames(gc.guideFrames);
         if (this.globalPrompt) this.globalPrompt.value = this.timeline.global.prompt || "";
         if (this.globalPromptWidget) this.globalPromptWidget.value = this.timeline.global.prompt || "";
         this.selectedIndex = clamp(
@@ -4721,6 +4730,7 @@ class MiniMaxH3DirectorEditor {
         this.timeline.global.refs = [];
         this.timeline.global.refAudios = [];
         this.timeline.global.refVideos = [];
+        this.timeline.global.guideFrames = [];
         this.timeline.global.referenceVideo = {};
         this.timeline.global.continuousReference = false;
         this.timeline.global.commonEnabled = false;
@@ -4766,6 +4776,7 @@ class MiniMaxH3DirectorEditor {
                 refs: g.refs,
                 refAudios: g.refAudios || g.ref_audios,
                 refVideos: g.refVideos || g.ref_videos,
+                guideFrames: cloneGuideFrames(g.guideFrames),
             },
         });
         if (!safe) return;
@@ -4812,6 +4823,7 @@ class MiniMaxH3DirectorEditor {
                 refs: cloneJson(g.refs, []),
                 refAudios: cloneJson(g.refAudios || g.ref_audios, []),
                 refVideos: cloneJson(g.refVideos || g.ref_videos, []),
+                guideFrames: cloneGuideFrames(g.guideFrames),
             },
         };
     }
@@ -4830,6 +4842,7 @@ class MiniMaxH3DirectorEditor {
         this.timeline.global.refs = cloneJson(gc.refs, []);
         this.timeline.global.refAudios = cloneJson(gc.refAudios, []);
         this.timeline.global.refVideos = cloneJson(gc.refVideos, []);
+        this.timeline.global.guideFrames = cloneGuideFrames(gc.guideFrames);
         this.selectedIndex = clamp(
             ws.selectedIndex ?? 0,
             0,
@@ -4857,6 +4870,7 @@ class MiniMaxH3DirectorEditor {
         this.timeline.global.refs = [];
         this.timeline.global.refAudios = [];
         this.timeline.global.refVideos = [];
+        this.timeline.global.guideFrames = [];
         if (this.globalPrompt) this.globalPrompt.value = "";
         if (this.globalPromptWidget) this.globalPromptWidget.value = "";
     }
@@ -4894,6 +4908,7 @@ class MiniMaxH3DirectorEditor {
                 refs: g.refs,
                 refAudios: g.refAudios || g.ref_audios,
                 refVideos: g.refVideos || g.ref_videos,
+                guideFrames: cloneGuideFrames(g.guideFrames),
             },
         });
         if (!safe) return;
@@ -6311,6 +6326,16 @@ class MiniMaxH3DirectorEditor {
         const on = this.isR2vCommonEnabled();
         const folded = this.isR2vCommonCollapsed();
         const bodyHidden = !on || folded;
+        const guidesBox = this.root?.querySelector('[data-r="r2v-common-guides"]');
+        if (guidesBox) {
+            guidesBox.classList.toggle("hidden", !r2v || bodyHidden);
+            if (r2v && !bodyHidden && !guidesBox.contains(document.activeElement)) {
+                guidesBox.replaceChildren(createGuideFramesEditor(this, {
+                    getTarget: () => this.timeline.global,
+                    common: true,
+                }));
+            }
+        }
         this.globalPanel?.classList.toggle("bd-r2v-common-panel", r2v);
         this.globalPanel?.classList.toggle("bd-r2v-common-collapsed", r2v && bodyHidden);
         this.r2vCommonHint?.classList.toggle("hidden", !r2v || bodyHidden);

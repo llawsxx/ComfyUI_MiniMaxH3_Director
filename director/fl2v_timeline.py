@@ -108,6 +108,7 @@ def _normalize_shots(raw_shots: list | None, *, frame_rate: float = 24.0) -> lis
             "width": int((dim_src or {}).get("width") or 0),
             "height": int((dim_src or {}).get("height") or 0),
             "prompt": (item.get("prompt") or "").strip(),
+            "guideFrames": item.get("guideFrames") or [],
             "negativePrompt": (
                 item.get("negativePrompt")
                 or item.get("negative_prompt")
@@ -626,6 +627,9 @@ def build_fl2v_director_plan(
         timeline_total = max(MIN_FL2V_FRAMES, content_total)
 
     from .segment_continuity import resolve_segment_continuity_from_prev
+    from .guide_frames import load_guide_frames
+
+    common_guides = timeline.get("fl2vCommon") or {}
 
     segments: list[SegmentPlan] = []
     source_clips: list[torch.Tensor] = []
@@ -707,6 +711,9 @@ def build_fl2v_director_plan(
                 task_key="fl2v",
                 use_global=False,
                 refs=refs,
+                guide_frames=load_guide_frames(
+                    common_guides.get("guideFrames") if common_guides.get("enabled") else shot.get("guideFrames"),
+                ),
                 negative_prompt=shot_negative,
                 source_clip=source_clip,
                 continuity_from_prev=resolve_segment_continuity_from_prev(

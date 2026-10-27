@@ -222,6 +222,10 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
             else CONTINUITY_PIPELINE_ID
         ),
     }
+    if getattr(seg, "guide_frames", None):
+        payload["guide_frames_v1"] = [
+            (guide.position, guide.frame_index, guide.image_identity) for guide in seg.guide_frames
+        ]
     if plan.continuity_enabled and bool(getattr(plan, "continuity_keep_tail", True)):
         payload["continuity_keep_tail"] = True
     if plan.continuity_enabled and bool(getattr(plan, "continuity_grade_align", False)):

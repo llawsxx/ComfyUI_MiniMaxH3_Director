@@ -608,6 +608,7 @@ def build_plan_from_external_groups(
     )
 
     timeline = _parse_timeline_meta(timeline_data)
+    from .guide_frames import load_guide_frames
     fps = float(timeline.get("frameRate") or frame_rate or 24.0)
     task_key = resolve_task_key(task_type)
     label = task_type_option_label(TASK_PROMPT_BY_KEY.get(task_key) or TASK_PROMPT_BY_KEY["t2v"])
@@ -747,6 +748,7 @@ def build_plan_from_external_groups(
                     use_global=False,
                     refs=refs,
                     negative_prompt=DEFAULT_FL2V_NEGATIVE if seg_task_key == "fl2v" else "",
+                    guide_frames=load_guide_frames(row.get("guideFrames")),
                     source_clip=source_clip,
                     ui_index=int(src_index),
                     continuity_from_prev=resolve_segment_continuity_from_prev(
@@ -817,6 +819,9 @@ def build_plan_from_external_groups(
                     ref_audios=ref_audios,
                     ref_videos=ref_videos,
                     ref_video_audios=ref_video_audios,
+                    guide_frames=load_guide_frames(
+                        row.get("guideFrames"), global_block.get("guideFrames") if common_enabled else None,
+                    ),
                     source_clip=None,
                     ui_index=int(src_index),
                     continuity_from_prev=resolve_segment_continuity_from_prev(

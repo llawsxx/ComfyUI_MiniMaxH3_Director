@@ -35,6 +35,7 @@ from .gen_timeline import (
     build_gen_director_plan,
     is_gen_timeline,
 )
+from .guide_frames import GuideFrame
 
 log = logging.getLogger("ComfyUI-MiniMaxH3-Director.director")
 
@@ -234,6 +235,7 @@ class SegmentPlan:
     ref_audios: list[SegmentRefAudio] = field(default_factory=list)
     ref_videos: list[SegmentRefVideo] = field(default_factory=list)
     ref_video_audios: list[SegmentRefAudio] = field(default_factory=list)
+    guide_frames: list[GuideFrame] = field(default_factory=list)
     reference_video_meta: dict = field(default_factory=dict)
     reference_video_start_frame: int = 0
     negative_prompt: str = ""

@@ -602,8 +602,13 @@ def apply_motion_context(
     ]
 
     merged = list(ctx_keyframes)
-    if keep_existing_keyframes:
-        for kf in _existing_keyframes(positive):
+    from .guide_frames import GUIDE_FRAME_KEY
+
+    for kf in _existing_keyframes(positive):
+        if kf.get(GUIDE_FRAME_KEY):
+            merged.append(kf)
+            continue
+        if keep_existing_keyframes:
             # Drop stock first-frame at 0 — replaced by context head.
             if int(kf.get("resolved_frame_index", -1)) == 0 and CTX_FRAME_KEY not in kf:
                 continue

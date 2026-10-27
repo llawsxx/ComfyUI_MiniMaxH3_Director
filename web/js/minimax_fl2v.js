@@ -21,6 +21,7 @@ import {
     fileForComfyUpload,
 } from "./minimax_gen_timeline.js";
 import { t } from "./minimax_i18n.js";
+import { cloneGuideFrames, createGuideFramesEditor } from "./minimax_guide_frames.js";
 
 const FL2V_SHOTS_MAX_H = 600;
 
@@ -206,6 +207,7 @@ export function newFl2vShot(overrides = {}) {
     const shot = {
         id: overrides.id || uid(),
         title: String(overrides.title || ""),
+        guideFrames: cloneGuideFrames(overrides.guideFrames),
         durationSec,
         prompt: overrides.prompt || "",
         negativePrompt: overrides.negativePrompt || DEFAULT_FL2V_NEGATIVE,
@@ -344,6 +346,7 @@ export function flattenFl2vShotsToSegments(editor) {
         const seg = {
             id: shot.id || uid(),
             title: shot.title || "",
+            guideFrames: cloneGuideFrames(isFl2vCommonEnabled(editor) ? editor.timeline.fl2vCommon.guideFrames : shot.guideFrames),
             start: cursor,
             length: fc,
             frameCount: fc,
@@ -796,6 +799,7 @@ export function mountFl2vPanel(parent) {
             <div class="bd-fl2v-common-body hidden" data-r="fl2v-common-body">
                 <div class="bd-fl2v-common-hint" data-i18n="panel.fl2v.commonHint"></div>
                 <div class="bd-fl2v-common-slots" data-r="fl2v-common-slots"></div>
+                <div data-r="fl2v-common-guides"></div>
             </div>
         </div>
         <div class="bd-fl2v-workbench" data-r="fl2v-workbench">
@@ -807,6 +811,7 @@ export function mountFl2vPanel(parent) {
             <span class="bd-label" data-i18n="panel.fl2v.shotPrompt">本镜提示词</span>
             <textarea data-r="fl2v-prompt" data-i18n-placeholder="placeholder.fl2vShot" placeholder=""></textarea>
             <textarea data-r="fl2v-negative" class="hidden" hidden aria-hidden="true"></textarea>
+            <div data-r="fl2v-guides"></div>
         </div>
         <input type="file" accept="image/*" hidden data-r="fl2v-file">
     `;
@@ -821,6 +826,8 @@ export function mountFl2vPanel(parent) {
         commonEnabled: wrap.querySelector('[data-r="fl2v-common-enabled"]'),
         commonBody: wrap.querySelector('[data-r="fl2v-common-body"]'),
         commonSlots: wrap.querySelector('[data-r="fl2v-common-slots"]'),
+        commonGuides: wrap.querySelector('[data-r="fl2v-common-guides"]'),
+        guides: wrap.querySelector('[data-r="fl2v-guides"]'),
         shotsEl: wrap.querySelector('[data-r="fl2v-shots"]'),
         detail: wrap.querySelector('[data-r="fl2v-detail"]'),
         title: wrap.querySelector('[data-r="fl2v-title"]'),
@@ -1434,6 +1441,11 @@ function renderFl2vCommonPanel(editor) {
         });
     });
     ui.commonSlots.appendChild(slots);
+    ui.commonGuides?.replaceChildren(createGuideFramesEditor(editor, {
+        getTarget: () => editor.timeline.fl2vCommon,
+        positions: ["middle", "frame"],
+        common: true,
+    }));
 }
 
 export function updateFl2vDetailUI(editor) {
@@ -1470,6 +1482,11 @@ export function updateFl2vDetailUI(editor) {
         return;
     }
     ui.detail?.classList.remove("hidden");
+    ui.guides?.replaceChildren(createGuideFramesEditor(editor, {
+        getTarget: () => editor.timeline.shots.find((current) => current.id === shot.id),
+        getFrameCount: () => shotFrameCount(shot, fl2vFps(editor)),
+        positions: ["middle", "frame"],
+    }));
     const selectionChanged = editor._fl2vPromptShotId !== shot.id;
     if (selectionChanged) flushFl2vPromptDraft(editor);
     editor._fl2vPromptSegIndex = idx;
@@ -1504,6 +1521,7 @@ export function bindFl2vEvents(editor) {
             editor.timeline.fl2vCommon = {
                 startImage: cloneFl2vImageRef(selected?.startImage),
                 endImage: cloneFl2vImageRef(selected?.endImage),
+                guideFrames: cloneGuideFrames(selected?.guideFrames),
             };
         }
         editor.timeline.fl2vCommon.enabled = ui.commonEnabled.checked;
@@ -1729,7 +1747,7 @@ export function getFl2vUiHeight(editor) {
     const rows = Math.max(1, commonEnabled ? n : Math.ceil(n / 3));
     const shotsH = Math.min(rows * (commonEnabled ? 280 : 150), FL2V_SHOTS_MAX_H);
     const previewH = editor?.needsLiveSamplePanel?.() ? 320 : 0;
-    const commonH = isFl2vCommonEnabled(editor) ? 200 : 36;
+    const commonH = isFl2vCommonEnabled(editor) ? 310 : 146;
     return 420 + Math.max(shotsH, previewH) + 80 + commonH;
 }
 
@@ -1748,6 +1766,7 @@ export function buildFl2vPayloadFields(editor) {
                 endImage: cloneFl2vImageRef(shot.endImage),
             } } : {}),
             durationSec: shot.durationSec,
+            guideFrames: cloneGuideFrames(shot.guideFrames),
             prompt: shot.prompt || "",
             negativePrompt: shot.negativePrompt || DEFAULT_FL2V_NEGATIVE,
             continuityFromPrev: isSegmentContinuityFromPrev(shot, index),
@@ -1763,6 +1782,7 @@ export function buildFl2vPayloadFields(editor) {
         segments: (editor.timeline.segments || []).map((s, i) => ({
             id: s.id,
             title: s.title || "",
+            guideFrames: cloneGuideFrames(s.guideFrames),
             start: s.start,
             length: s.length,
             frameCount: s.length,

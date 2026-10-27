@@ -38,6 +38,7 @@ import {
 } from "./minimax_gen_timeline.js";
 import { refreshPromptTokenEditors, teardownPromptImageMentions, wirePromptImageMentions } from "./minimax_prompt_mentions.js";
 import { t } from "./minimax_i18n.js";
+import { createGuideFramesEditor } from "./minimax_guide_frames.js";
 import { createFl2vSlotPair, normalizeImageRef } from "./minimax_fl2v.js";
 import {
     hasDuplicateReferenceAudio,
@@ -3066,9 +3067,18 @@ function appendBatchCard(list, editor, seg, index, ctx) {
         renderPreview(preview, seg, index === runningIdx, isVideo, seg.previewFps || fps, editor);
 
         if (isR2v && r2vMain) {
+            r2vMain.appendChild(createGuideFramesEditor(editor, {
+                getTarget: () => editor.timeline.segments.find((current) => current.id === seg.id),
+                getFrameCount: () => seg.frameCount || seg.length,
+            }));
             r2vMain.appendChild(prompts);
             r2vMain.appendChild(preview);
         } else {
+            if (isFl2v) prompts.prepend(createGuideFramesEditor(editor, {
+                getTarget: () => editor.timeline.segments.find((current) => current.id === seg.id),
+                getFrameCount: () => seg.frameCount || seg.length,
+                positions: ["middle", "frame"],
+            }));
             card.appendChild(prompts);
             card.appendChild(preview);
         }

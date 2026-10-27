@@ -427,6 +427,7 @@ def _group_json(seg: dict) -> dict:
         "refs": seg.get("refs") or [],
         "refAudios": seg.get("refAudios") or seg.get("ref_audios") or [],
         "refVideos": seg.get("refVideos") or seg.get("ref_videos") or [],
+        "guideFrames": seg.get("guideFrames") or [],
         "continuityFromPrev": seg.get("continuityFromPrev", seg.get("continuity_from_prev")),
         "refImageSize": seg.get("refImageSize") or seg.get("ref_image_size"),
     }
@@ -603,6 +604,8 @@ def build_export_pack(timeline: dict, widgets: dict | None = None, *, dry_run: b
         "refs": global_block.get("refs") or [],
         "refAudios": global_block.get("refAudios") or global_block.get("ref_audios") or [],
         "refVideos": global_block.get("refVideos") or global_block.get("ref_videos") or [],
+        "guideFrames": global_block.get("guideFrames") or [],
+        "fl2vCommon": data.get("fl2vCommon") or {},
     }
 
     result: dict[str, Any] = {
@@ -772,6 +775,7 @@ def _assemble_timeline(extracted: Path, pack_meta: dict) -> dict:
         "refAudios": _merge_refs(shared.get("refAudios") or shared.get("ref_audios"), scanned_shared["refAudios"]),
         "refVideos": _merge_refs(shared.get("refVideos") or shared.get("ref_videos"), scanned_shared["refVideos"]),
         "referenceVideo": {},
+        "guideFrames": shared.get("guideFrames") or [],
         "continuousReference": False,
     }
     groups_root = extracted / "asset_groups"
@@ -801,6 +805,7 @@ def _assemble_timeline(extracted: Path, pack_meta: dict) -> dict:
             "durationSec": dur,
             "prompt": raw.get("prompt") or "",
             "negativePrompt": raw.get("negativePrompt") or "",
+            "guideFrames": raw.get("guideFrames") or [],
             "taskType": raw.get("taskType") or "",
             "refs": _merge_refs(raw.get("refs"), scanned["refs"]),
             "refAudios": _merge_refs(raw.get("refAudios") or raw.get("ref_audios"), scanned["refAudios"]),
@@ -818,6 +823,7 @@ def _assemble_timeline(extracted: Path, pack_meta: dict) -> dict:
             "durationSec": dur,
             "prompt": seg["prompt"],
             "negativePrompt": seg["negativePrompt"],
+            "guideFrames": seg["guideFrames"],
             "continuityFromPrev": seg["continuityFromPrev"],
             "startImage": start_img,
             "endImage": end_img,
@@ -863,6 +869,7 @@ def _assemble_timeline(extracted: Path, pack_meta: dict) -> dict:
     }
     if task_key == "fl2v":
         timeline["shots"] = shots
+        timeline["fl2vCommon"] = shared.get("fl2vCommon") or {}
         timeline["keyframes"] = []
     src_dir = extracted / "source_video"
     if src_dir.is_dir():

@@ -186,6 +186,17 @@ This repo ships examples under `example_workflows/`:
 4. Adjust duration on the shot card or timeline; write mid-shot motion / camera / transition in the prompt
 5. Queue; with multiple groups, use **Run select** to sample only some of them
 
+### Timed guide images
+
+- **r2v**: each group and the common-parameter panel have a guide editor supporting first, middle, last, or an explicit frame. Guides do not consume reference-image slots or change `<Picture N>` numbering.
+- **fl2v**: existing first/last slots remain unchanged; select a shot to add middle/explicit-frame guides. With common parameters enabled, configure these guides in the common panel for all shots. Disabling restores individual guides. Mixed-mode r2v/fl2v segments also support local guides.
+- Choose an uploaded or existing image and add as many entries as needed. Entries without an image are ignored.
+- Explicit indices are **zero-based and relative to the segment's exported frames**, not the full timeline. Index 48 is about 2 seconds at 24fps. Continuity-prefix offsets are applied automatically.
+- For an explicit frame, decimal seconds and the frame index can be edited interchangeably using `frame_idx = round(seconds × fps)` at the current frame rate. For example, `1.25` seconds at 24fps selects frame `30`. Confirming shows the frame-aligned time. Only the frame index is stored, so changing the frame rate preserves that index.
+- First/middle/last follow each segment's actual export length, including the extra tail retained by Keep full. Shared explicit indices must fit every segment. Out-of-range indices after shortening a segment produce a clear error, not a silent reposition.
+- Local r2v guides override shared guides at the same resolved frame; later entries win within a group. An explicit fl2v guide overrides an existing endpoint at the same frame.
+- These are generation conditions, **not pixel-perfect locks or post-generation pasted frames**. Images and positions affect cache identity; workflows and Director packs preserve the configuration and assets.
+
 ### Reference groups (r2v) — short guide
 
 1. Set task type to **Reference to Video (r2v)** (**ref2va** UNET + audio_vae)

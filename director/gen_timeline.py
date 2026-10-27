@@ -386,6 +386,7 @@ def build_gen_director_plan(
         segment_ref_audios_for_context,
         segment_refs_for_context,
     )
+    from .guide_frames import load_guide_frames
 
     global_block = timeline.get("global") or {}
     edit_mode = timeline.get("editMode") or timeline.get("edit_mode") or "global"
@@ -650,6 +651,10 @@ def build_gen_director_plan(
                 refs=seg_refs,
                 ref_audios=seg_ref_audios,
                 ref_videos=seg_ref_videos,
+                guide_frames=load_guide_frames(
+                    seg_data.get("guideFrames"),
+                    global_block.get("guideFrames") if common_enabled and seg_task_key == "r2v" else None,
+                ) if seg_task_key in {"r2v", "fl2v"} else [],
                 negative_prompt=seg_negative,
                 source_clip=seg_source,
                 continuity_from_prev=resolve_segment_continuity_from_prev(

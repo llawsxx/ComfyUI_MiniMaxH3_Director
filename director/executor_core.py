@@ -1202,6 +1202,26 @@ def execute_director_plan_core(
                 )
             )
 
+        if getattr(seg, "guide_frames", None):
+            from .guide_frames import apply_guide_frames
+
+            guide_prefix = trim_frames
+            guide_latent = latent
+            guide_export_len = continuity_export_len(
+                trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
+                target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
+            )
+            if skip_first_sample:
+                guide_handoff = pre_cache.get("handoff") or {}
+                guide_prefix = int(guide_handoff.get("trim_frames") or 0)
+                guide_export_len = int(guide_handoff.get("export_frames") or guide_export_len)
+                guide_latent = pre_cache["av_latent"]
+            positive = apply_guide_frames(
+                positive, guide_latent, vae=vae, guides=seg.guide_frames,
+                visible_frames=guide_export_len, prefix_frames=guide_prefix,
+            )
+            task_hint += f" + {len(seg.guide_frames)} timed guide(s)"
+
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="context_encode", phase_value=1, phase_max=1, **meta,
