@@ -23,6 +23,7 @@ from .fl2v_timeline import (
     _build_fl2v_endpoint_source,
     _duration_to_minimax_frames,
     _unify_fl2v_pair_canvas,
+    is_fl2v_prompt_reinforcement_enabled,
     reinforce_fl2v_prompt,
 )
 from .frame_align import minimax_align_frame_count
@@ -732,6 +733,7 @@ def build_plan_from_external_groups(
                         prompt,
                         has_end_frame=end_img is not None,
                         has_start_frame=start_img is not None,
+                        enabled=is_fl2v_prompt_reinforcement_enabled(timeline),
                     )
 
             row = timeline_row_for_index(timeline, int(src_index))

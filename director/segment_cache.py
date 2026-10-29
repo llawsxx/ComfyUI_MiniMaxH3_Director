@@ -19,6 +19,7 @@ import torch
 import folder_paths
 
 from .h3_latent_continue import CONTINUE_PIPELINE_ID, clamp_seam_min_mask
+from .fl2v_timeline import is_fl2v_prompt_reinforcement_enabled
 from .h3_motion_context import CONTINUITY_PIPELINE_ID, trim_context_prefix, trim_export_tail
 from .plan import DirectorPlan, SegmentPlan, resolve_ref_image_size
 
@@ -189,6 +190,7 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
         "prompt": seg.prompt,
         "negative": seg.negative_prompt,
         "task_key": seg.task_key,
+        "fl2v_prompt_reinforcement_v1": is_fl2v_prompt_reinforcement_enabled(plan.raw),
         "width": plan.width,
         "height": plan.height,
         "frame_rate": float(getattr(plan, "frame_rate", 24) or 24),

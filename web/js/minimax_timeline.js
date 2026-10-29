@@ -257,6 +257,11 @@ function snapContinuityFrames(raw) {
     return best;
 }
 
+function isFl2vPromptReinforcementEnabled(output = {}) {
+    const value = output.fl2vPromptReinforcement ?? output.fl2v_prompt_reinforcement;
+    return value === true || value === 1 || (typeof value === "string" && ["true", "1", "on"].includes(value.trim().toLowerCase()));
+}
+
 function normalizeOutputContinuity(output = {}) {
     const rawOverlap = output.continuityOverlapFrames ?? output.continuity_overlap_frames ?? DEFAULT_CONTINUITY_FRAMES;
     return {
@@ -269,6 +274,7 @@ function normalizeOutputContinuity(output = {}) {
         ),
         continuityKeepTail: isContinuityKeepTail(output),
         continuityGradeAlign: isContinuityGradeAlign(output),
+        fl2vPromptReinforcement: isFl2vPromptReinforcementEnabled(output),
         audioMode: normalizeAudioMode(output.audioMode ?? output.audio_mode),
         refImageSize: normalizeRefImageSize(output.refImageSize ?? output.ref_image_size),
     };
@@ -2157,6 +2163,7 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityRedraw: data.output?.continuityRedraw ?? data.output?.continuity_redraw,
             continuityKeepTail: data.output?.continuityKeepTail ?? data.output?.continuity_keep_tail,
             continuityGradeAlign: data.output?.continuityGradeAlign ?? data.output?.continuity_grade_align,
+            fl2vPromptReinforcement: data.output?.fl2vPromptReinforcement ?? data.output?.fl2v_prompt_reinforcement,
         });
         // Infer aspectRatio from saved width/height when older payloads omitted the label.
         if (!data.output.aspectRatio && data.output.width > 0 && data.output.height > 0) {
@@ -3152,6 +3159,10 @@ class MiniMaxH3DirectorEditor {
                 <option value="all" data-i18n="output.exportMode.all">全部导出</option>
                 <option value="segments" data-i18n="output.exportMode.segments">分段导出</option>
             </select>
+            <label data-i18n-title="tooltip.fl2vPromptReinforcement">
+                <input type="checkbox" data-r="out-fl2v-prompt-reinforcement">
+                <span data-i18n="output.fl2vPromptReinforcement">首尾帧提示词强化</span>
+            </label>
             <span class="hidden" data-r="out-max-frames-wrap" hidden aria-hidden="true">
                 <label data-i18n="output.maxFrames">最大帧数</label>
                 <input type="number" class="bd-num" data-r="out-max-frames" min="0" max="999999" step="1" value="0" style="width:64px">
@@ -3535,6 +3546,7 @@ class MiniMaxH3DirectorEditor {
         this.exportPreFaceRefineCb = this.root.querySelector('[data-r="out-export-preface"]');
         this.outMaxFrames = this.root.querySelector('[data-r="out-max-frames"]');
         this.outExportMode = this.root.querySelector('[data-r="out-export-mode"]');
+        this.fl2vPromptReinforcementCb = this.root.querySelector('[data-r="out-fl2v-prompt-reinforcement"]');
         this.segmentContinuityWrap = this.root.querySelector('[data-r="segment-continuity-wrap"]');
         this.segmentContinuityCb = this.root.querySelector('[data-r="segment-continuity-cb"]');
         this.segmentContinuityOverlap = this.root.querySelector('[data-r="segment-continuity-overlap"]');
@@ -3862,6 +3874,9 @@ class MiniMaxH3DirectorEditor {
         };
         this.outMaxFrames.onchange = () => this.onOutputField("maxExportFrames", +this.outMaxFrames.value);
         this.outExportMode.onchange = () => this.onOutputField("exportMode", this.outExportMode.value);
+        if (this.fl2vPromptReinforcementCb) {
+            this.fl2vPromptReinforcementCb.onchange = () => this.onOutputField("fl2vPromptReinforcement", this.fl2vPromptReinforcementCb.checked);
+        }
         if (this.outAudioMode) {
             this.outAudioMode.onchange = () => this.onOutputField("audioMode", this.outAudioMode.value);
         }
@@ -6578,6 +6593,7 @@ class MiniMaxH3DirectorEditor {
         if (this.outH) this.outH.value = String(out.height ?? 480);
         if (this.outMaxFrames) this.outMaxFrames.value = String(out.maxExportFrames ?? 0);
         if (this.outExportMode) this.outExportMode.value = out.exportMode === "segments" ? "segments" : "all";
+        if (this.fl2vPromptReinforcementCb) this.fl2vPromptReinforcementCb.checked = isFl2vPromptReinforcementEnabled(out);
         if (this.outAudioMode) {
             const am = normalizeAudioMode(out.audioMode);
             this.outAudioMode.value = am;
@@ -6997,6 +7013,8 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.continuityKeepTail = !!value;
         } else if (key === "continuityGradeAlign") {
             this.timeline.output.continuityGradeAlign = !!value;
+        } else if (key === "fl2vPromptReinforcement") {
+            this.timeline.output.fl2vPromptReinforcement = !!value;
         }
         this.syncOutputUIFromTimeline();
         if (this.isFl2vMode()) updateFl2vDetailUI(this);
@@ -7121,6 +7139,9 @@ class MiniMaxH3DirectorEditor {
         if (this.timeline.output.audioMode == null) {
             this.timeline.output.audioMode = "generate";
         }
+        this.timeline.output.fl2vPromptReinforcement = this.fl2vPromptReinforcementCb
+            ? !!this.fl2vPromptReinforcementCb.checked
+            : isFl2vPromptReinforcementEnabled(this.timeline.output);
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {
             this.timeline.output.exportSourceImages = !!this.exportSourceImagesCb.checked;
         }

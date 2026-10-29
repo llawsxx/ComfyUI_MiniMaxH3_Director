@@ -175,7 +175,11 @@ def _strip_fl2v_wraps(text: str) -> str:
     changed = True
     while changed and text:
         changed = False
-        for p in (FLF_PROMPT_PREFIX, I2V_PROMPT_PREFIX, L2V_PROMPT_PREFIX, *_LEGACY_FL2V_WRAPS):
+        for p in (
+            FLF_PROMPT_PREFIX, I2V_PROMPT_PREFIX, L2V_PROMPT_PREFIX,
+            FLF_PROMPT_SUFFIX, I2V_PROMPT_SUFFIX, L2V_PROMPT_SUFFIX,
+            "中间过程：", *_LEGACY_FL2V_WRAPS,
+        ):
             if text.startswith(p):
                 text = text[len(p) :].strip()
                 changed = True
@@ -240,17 +244,25 @@ def fl2v_prompt_body_only(prompt: str) -> str:
     return text
 
 
+def is_fl2v_prompt_reinforcement_enabled(timeline: dict | None) -> bool:
+    output = (timeline or {}).get("output") or {}
+    value = output.get("fl2vPromptReinforcement", output.get("fl2v_prompt_reinforcement", False))
+    return value is True or value == 1 or (isinstance(value, str) and value.strip().lower() in {"true", "1", "on"})
+
+
 def reinforce_fl2v_prompt(
     prompt: str,
     *,
     has_end_frame: bool,
     has_start_frame: bool = True,
+    enabled: bool = False,
 ) -> str:
-    """Ensure first/last-frame hard constraints wrap the (possibly PE-enhanced) prompt.
-
-    Hard locks are placed *before* the motion body so they survive token truncation.
-    Supports start-only, end-only, start+end, and neither (plain text-to-video).
-    """
+    """Optionally prepend endpoint instructions without changing image conditions."""
+    if not enabled:
+        text = _strip_fl2v_wraps((prompt or "").strip())
+        if text.startswith("中间过程："):
+            text = text[len("中间过程：") :].strip()
+        return text
     text = fl2v_prompt_body_only(prompt)
     if not has_start_frame and not has_end_frame:
         return text
@@ -645,6 +657,7 @@ def build_fl2v_director_plan(
             user_prompt,
             has_end_frame=end_kf is not None,
             has_start_frame=start_kf is not None,
+            enabled=is_fl2v_prompt_reinforcement_enabled(timeline),
         )
         shot_negative = (
             (shot.get("negativePrompt") or "").strip()

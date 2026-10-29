@@ -186,6 +186,8 @@ This repo ships examples under `example_workflows/`:
 4. Adjust duration on the shot card or timeline; write mid-shot motion / camera / transition in the prompt
 5. Queue; with multiple groups, use **Run select** to sample only some of them
 
+**Endpoint prompt reinforcement** in the output settings is off by default, including older workflows without this option. Enable it to add endpoint-preservation PREFIX / SUFFIX instructions to i2v / fl2v segments. Disabled mode uses the prompt body and removes known legacy automatic wrappers. This applies to UI segments, mixed mode, and external Groups; image/guide/VAE/keyframe conditions remain unchanged, and it does not provide a pixel lock. The option is saved in workflows and Director packs, and toggling it invalidates affected caches.
+
 ### Timed guide images
 
 - **r2v**: each group and the common-parameter panel have a guide editor supporting first, middle, last, or an explicit frame. Guides do not consume reference-image slots or change `<Picture N>` numbering.

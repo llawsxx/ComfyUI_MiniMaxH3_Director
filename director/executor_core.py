@@ -848,8 +848,8 @@ def execute_director_plan_core(
 
         positive_prompt = seg.prompt
 
-        if seg.task_key == "fl2v":
-            from .fl2v_timeline import reinforce_fl2v_prompt
+        if seg.task_key in {"i2v", "fl2v"}:
+            from .fl2v_timeline import is_fl2v_prompt_reinforcement_enabled, reinforce_fl2v_prompt
 
             has_start = any(getattr(r, "index", None) == 0 for r in (seg.refs or []))
             has_end = any(getattr(r, "index", None) == 1 for r in (seg.refs or []))
@@ -857,10 +857,14 @@ def execute_director_plan_core(
                 # Legacy packs without explicit indices: [start] or [start, end].
                 has_start = True
                 has_end = len(seg.refs) >= 2
+            if seg.task_key == "i2v":
+                has_start = has_start or (clip_frames is not None and clip_frames.shape[0] > 0)
+                has_end = False
             positive_prompt = reinforce_fl2v_prompt(
                 positive_prompt,
                 has_end_frame=has_end,
                 has_start_frame=has_start,
+                enabled=is_fl2v_prompt_reinforcement_enabled(plan.raw),
             )
         elif seg.task_key == "r2v":
             ref_idxs = [int(getattr(r, "index", 0)) for r in (seg.refs or []) if r is not None]
