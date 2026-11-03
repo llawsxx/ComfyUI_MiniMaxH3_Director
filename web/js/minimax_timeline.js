@@ -1049,13 +1049,13 @@ const STYLES = `
    clipping the editor or forcing its height back to auto. */
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo>.bd-batch-card{flex:1 1 auto;min-height:0;align-self:stretch}
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo>.bd-batch-card.bd-batch-r2v{
-  display:flex;flex-direction:column;flex:0 0 auto!important;min-height:100%;height:auto!important
+  display:flex;flex-direction:column;flex:1 0 auto!important;min-height:100%;height:auto!important;box-sizing:border-box
 }
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-r2v-body{
-  flex:0 0 auto;min-height:280px;max-height:none;align-self:stretch
+  flex:1 0 auto;min-height:280px;max-height:none;align-self:stretch
 }
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-r2v-main{
-  flex:0 0 auto;min-height:0;height:auto;max-height:none
+  flex:1 0 auto;min-height:0;height:auto;max-height:none
 }
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-prompts{
   flex:0 0 auto;min-height:140px;max-height:none;overflow:visible
@@ -1066,6 +1066,9 @@ const STYLES = `
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-token-editor{
   flex:0 0 auto;min-height:120px;max-height:none;height:360px;overflow:auto;resize:vertical
 }
+.bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-r2v-main>.bd-batch-prompts,
+.bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-r2v-main .bd-token-wrap,
+.bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo .bd-batch-r2v-main .bd-token-editor{flex:1 0 auto}
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo>.bd-batch-card.bd-batch-plain,
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo>.bd-batch-card.bd-batch-source,
 .bd-wrap.bd-batch-fill .bd-batch-list.bd-batch-solo>.bd-batch-card.bd-batch-fl2v,

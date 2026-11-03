@@ -3434,7 +3434,7 @@ export function syncBatchPanelFillHeight(editor, opts = {}) {
         for (const card of list.querySelectorAll(".bd-batch-card")) {
             if (solo && (listH > 0 || !trusted)) {
                 card.style.flex = "1 1 auto";
-                card.style.minHeight = "0";
+                card.style.minHeight = card.classList.contains("bd-batch-r2v") ? "100%" : "0";
                 card.style.height = "100%";
             } else {
                 card.style.flex = "";
