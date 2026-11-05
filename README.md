@@ -46,17 +46,25 @@
 - 支持普通采样、`rho=0` 的 SelfLift、定时引导图，以及「引导 / 引导+重绘」段间衔接。全分段模式在采样阶段用上一段原始 AV latent 衔接，不提前解码；相邻选中段的接缝尾裁剪延后到正式解码时执行。
 - 全分段模式部分重跑时，引用的上一段必须有同分辨率原始 AV latent 缓存；缺少或画布不匹配会明确报错，不会在采样阶段偷偷加载 VAE 重编码。可一起选中相邻分段，或切换到单分段模式。
 - 暂不兼容 Refine / FaceRefine，以及 `rho>0` 的 SelfLift 像素锚；这些功能需要穿插采样与解码，会在执行前报错。分阶段模式自动关闭采样中音频预览，避免音频 VAE 在采样阶段重新加载；TAE 视频预览仍可使用。
-- 可与「延后 VAE 解码」同时开启：采样后先保存原始 latent，解码阶段只生成 TAE 预览，正式 VAE 解码仍可留到独立工作流。中途停止时已落盘的 latent 保留。
+- 可与「延后 VAE 解码」同时开启：采样后保存原始 latent，跳过视频/音频 VAE 解码，也不生成 TAE 视频。中途停止时已落盘的 latent 保留。
+
+### 采样完成立即保存 latent
+
+输出栏新增 **「采样完成立即保存 latent」**，默认关闭。开启后，每段一采完成、VAE 解码前立即保存原始视频/音频 latent 和 `manifest.json`，随后继续原来的解码/精修流程。原逐段、单分段分阶段、全分段分阶段均支持；全分段模式无需等到全部采样或解码完成才落盘。
+
+- 默认保存到 `ComfyUI/output/minimax_seg_export/<时间戳>/`；分段导出时与本轮 MP4 共用目录。`latent_folder` 输出该任务目录。
+- 保存的是一采结果，不包含后续 Refine / FaceRefine；独立解码不会重新运行精修或修脸。段间引导的上下文裁剪信息会同步更新到 manifest。
+- 中途停止时已保存的段仍可独立解码，不会自动续采或跳过已完成段。保存失败会报错，不会悄悄忽略。
+- 与「延后 VAE 解码」同时开启时只保存一份，不重复写入。
 
 ### 延后 VAE 解码与独立 Latent Decode
 
-在导演台输出栏开启 **「延后 VAE 解码」** 后，每段采样完成会立即保存原始视频和音频 latent，再用 TAEH3 解码保存无声预览。不会运行正式视频/音频 VAE 解码，下一段仍使用原始 latent 做段间引导（含「引导+重绘」）。普通生成模式默认不变。
+在导演台输出栏开启 **「延后 VAE 解码」** 后，每段采样完成会立即保存原始视频和音频 latent，**不运行视频/音频 VAE 解码，也不生成 TAE 视频**。下一段仍使用原始 latent 做段间引导（含「引导+重绘」）。普通生成模式默认不变。
 
-- 预先放置 `ComfyUI/models/vae_approx/taeh3.safetensors`。缺少权重或 ffmpeg 会在采样前报错，不会伪装成 Latent2RGB 预览。
-- 同时兼容逐 latent 步的 2D TAE 和原生时序 TAE 权重。2D 版本会解码每个 latent 步，再按 H3 的 `1/4/4/4/4` 时间跨度保持画面以对齐预览时长；不代表正式 VAE 的逐帧运动细节。
-- 输出栏的目录留空时保存到 `ComfyUI/output/minimax_latents/<时间戳>/`；支持相对 `output/` 的路径或绝对路径，每次运行创建独立子目录。
-- 任务内含 `manifest.json`、`seg_0001.safetensors`（原始 AV latent）和 `seg_0001_tae.mp4`（预览）。音频模式为「原声」时额外保存源音频，不依赖后续还能访问原素材。
-- 导演台 `images` / `images_pre_refine` 是 **TAE 预览**，`audio` 为静音；新增 `latent_folder` 输出任务路径，原输出口顺序不变。保留原来的下游输出节点即可触发执行；如果只想保存任务文件夹，可将 `latent_folder` 接到 ComfyUI 自带的 **Preview as Text（PreviewAny）**，不必连接 SaveVideo。
+- 仅保存 latent 不需要 TAE 权重或用于预览视频的 ffmpeg；条件编码仍可能使用 VAE / CLIP。可选的采样中实时预览仍由原预览开关控制。
+- 输出栏的目录留空时保存到 `ComfyUI/output/minimax_seg_export/<时间戳>/`；支持相对 `output/` 的路径或绝对路径，每次运行创建独立子目录。
+- 任务内含 `manifest.json` 和 `seg_0001.safetensors`（原始 AV latent）。音频模式为「原声」时额外保存源音频，不依赖后续还能访问原素材。
+- 导演台 IMAGE / AUDIO 输出阻断，避免下游保存占位图；`latent_folder` 输出任务路径，原输出口顺序不变。可将它接到 ComfyUI 自带的 **Preview as Text（PreviewAny）** 触发执行，不必连接 SaveVideo。
 - 支持普通采样和 `rho=0` 的 SelfLift；SelfLift 像素锚（`rho>0`）需要采样中解码，会提前报错。请断开导演台上的 Refine / FaceRefine。两者涉及后续精修/修脸，不会在延后模式下偷偷跳过。
 - 段间引导必须有同分辨率的上一段原始 AV latent，不会用 TAE 画面重新编码。选择运行时仅保存本轮采样段，不混入普通成片缓存；建议把相邻段一起运行。
 
@@ -64,10 +72,10 @@
 
 1. `latent_folder` 填任务目录（或其 `manifest.json`）；接正式 `video_vae`，生成音频任务还需接 `audio_vae`。无需 MODEL / CLIP，可重启 ComfyUI 后运行。
 2. `segments` 留空或 `all` 解码全部，也可填 `1,3-5`（原时间轴编号，从 1 开始）。自动按保存的帧率、上下文裁剪量和最终导出长度解码，避免重复上下文及音画错位。
-3. 默认分段保存 MP4 到任务目录的 `decoded/<时间戳>/`，也可自定义输出目录。每段完成即落盘；即使采样任务中途停止，已保存的 latent 仍能单独解码。
+3. 默认分段保存 MP4 到 latent 所在任务目录，同名 MP4 / `decode.json` 自动编号，避免覆盖已有视频和解码记录。也可自定义输出目录（每次创建时间戳子目录）。每段完成即落盘；即使采样任务中途停止，已保存的 latent 仍能单独解码。旧 `minimax_latents` 任务目录也可继续加载。
 4. `tiled_decode` 可使用分块 VAE 解码；`merge_video` 另存合并视频，需保留全部选中段画面于内存。默认 `return_images=false` 只保存文件并阻断 IMAGE/AUDIO 输出以节省内存；需接下游画面节点时再开启。
 
-正式解码始终读取 safetensors，不会从 TAE 视频反推 latent。接缝调色在正式解码时根据真实画面重算。新节点和 Python 执行逻辑需要**重启 ComfyUI**，然后强制刷新浏览器。
+正式解码始终读取 safetensors。接缝调色在正式解码时根据真实画面重算。新节点和 Python 执行逻辑需要**重启 ComfyUI**，然后强制刷新浏览器。
 
 ### 输入 / 输出
 

@@ -15,7 +15,7 @@ class MiniMaxH3DirectorLatentDecode:
                 "latent_folder": ("STRING", {"default": "", "tooltip": "导演台保存的 latent 任务文件夹或 manifest.json；相对路径基于 ComfyUI/output。"}),
                 "video_vae": ("VAE",),
                 "segments": ("STRING", {"default": "all", "tooltip": "all 或 1,3-5，按原时间轴编号，从 1 开始。"}),
-                "output_directory": ("STRING", {"default": "", "tooltip": "留空存入任务文件夹下 decoded/；每次运行使用新子目录。"}),
+                "output_directory": ("STRING", {"default": "", "tooltip": "留空直接保存到 latent 所在文件夹，同名文件自动编号避免覆盖；指定目录时每次运行创建新子目录。"}),
                 "tiled_decode": ("BOOLEAN", {"default": False}),
                 "tile_size": ("INT", {"default": 512, "min": 128, "max": 4096, "step": 64}),
                 "temporal_size": ("INT", {"default": 64, "min": 16, "max": 4096, "step": 8}),

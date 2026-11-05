@@ -23,41 +23,23 @@ from .audio_export import (
     prepare_segment_audio_for_file_export,
     resolve_audio_mode,
 )
-from .h3_motion_context import FRAME_PER_TOKEN, _repack_av_streams, _streams_from_latent, av_pixel_size
+from .h3_motion_context import _repack_av_streams, _streams_from_latent, av_pixel_size
 
 FORMAT = "minimax-h3-director-latents"
 VERSION = 1
 log = logging.getLogger("ComfyUI-MiniMaxH3-Director.deferred_decode")
 
 
-class _FlatTAEVideoDecoder:
-    def __init__(self, state_dict):
-        from .tae_preview import _TinyVAEDecoder
-
-        self.decoder = _TinyVAEDecoder(state_dict)
-        self.latent_channels = self.decoder.latent_channels
-
-    def decode(self, video):
-        frames = torch.stack([
-            self.decoder.decode_frame(video[:, :, index]) for index in range(video.shape[2])
-        ])
-        repeats = torch.tensor([FRAME_PER_TOKEN[index % len(FRAME_PER_TOKEN)] for index in range(video.shape[2])])
-        return torch.repeat_interleave(frames, repeats, dim=0).unsqueeze(0)
-
-
-def _load_tae(path: str):
-    import comfy.sd
-    import comfy.utils
-
-    state_dict = comfy.utils.load_torch_file(path, safe_load=True)
-    if "decoder.22.bias" in state_dict:
-        return comfy.sd.VAE(sd=state_dict)
-    return _FlatTAEVideoDecoder(state_dict)
-
-
 def deferred_decode_enabled(plan) -> bool:
     output = (plan.raw or {}).get("output") or {}
     return output.get("deferVaeDecode", output.get("defer_vae_decode", False)) in (
+        True, 1, "1", "true", "True", "on",
+    )
+
+
+def save_sampled_latents_enabled(plan) -> bool:
+    output = (plan.raw or {}).get("output") or {}
+    return output.get("saveSampledLatents", output.get("save_sampled_latents", False)) in (
         True, 1, "1", "true", "True", "on",
     )
 
@@ -145,37 +127,16 @@ def _crop_export(frames, audio, record: dict, fps: float):
     )
 
 
-class DeferredDecodeRun:
-    def __init__(self, plan):
+class LatentSaveRun:
+    def __init__(self, plan, *, root: Path | None = None):
         import folder_paths
-        from ..lib.video_export import _ffmpeg_bin
-
-        if plan.refine or plan.face_refine:
-            raise ValueError(
-                "延后 VAE 解码暂不兼容导演台上的 Refine / FaceRefine。"
-                "请断开它们后再运行。"
-            )
-        if plan.selflift and float(plan.selflift.get("rho") or 0) > 1e-8:
-            raise ValueError("延后解码要求 SelfLift.rho=0；像素锚混合会在采样中调用正式 VAE 解码。")
-        if not _ffmpeg_bin():
-            raise ValueError("延后 VAE 解码需要 ffmpeg 来保存 TAE 预览视频。")
-        names = folder_paths.get_filename_list("vae_approx")
-        name = next((item for item in names if Path(item).name == "taeh3.safetensors"), None)
-        if name is None:
-            name = next((item for item in names if Path(item).name.startswith("taeh3")), None)
-        path = folder_paths.get_full_path("vae_approx", name) if name else None
-        if not path:
-            raise ValueError("请先将 taeh3.safetensors 放入 ComfyUI/models/vae_approx/。")
-        self.tae = _load_tae(path)
-        if getattr(self.tae, "latent_channels", None) != 24:
-            raise ValueError("延后解码需要 MiniMax H3 24 通道 TAE 权重。")
         output = (plan.raw or {}).get("output") or {}
         requested = str(output.get("latentOutputDir", output.get("latent_output_dir", "")) or "").strip()
         base = Path(folder_paths.get_output_directory())
-        parent = Path(requested).expanduser() if requested else Path("minimax_latents")
+        parent = Path(requested).expanduser() if requested else Path("minimax_seg_export")
         if not parent.is_absolute():
             parent = base / parent
-        self.root = _new_run_directory(parent.resolve())
+        self.root = Path(root).resolve() if root is not None else _new_run_directory(parent.resolve())
         self.plan = plan
         self.manifest = {
             "format": FORMAT, "version": VERSION, "status": "sampling",
@@ -183,13 +144,14 @@ class DeferredDecodeRun:
             "audio_mode": resolve_audio_mode(plan),
             "continuity_enabled": bool(plan.continuity_enabled),
             "continuity_grade_align": bool(plan.continuity_grade_align),
-            "preview_decoder": "flat-tae-held-spans" if isinstance(self.tae, _FlatTAEVideoDecoder) else "temporal-tae",
+            "preview_decoder": None,
+            "latent_stage": "first_pass",
             "selected_indices": [int(seg.timeline_index) for seg in plan.segments
                                  if plan.run_indices is None or seg.index in plan.run_indices],
             "segments": [],
         }
         self._publish()
-        log.info("Deferred AV latent task folder: %s", self.root)
+        log.info("AV latent task folder: %s", self.root)
 
     def _publish(self):
         _write_json(self.root / "manifest.json", self.manifest)
@@ -204,7 +166,7 @@ class DeferredDecodeRun:
     def save_sample(self, seg, samples: dict, *, trim_frames: int, export_frames: int, sample_frames: int):
         video, audio = _streams_from_latent(samples)
         if video.ndim != 5 or video.shape[0] != 1 or video.shape[1] != 24:
-            raise ValueError("延后解码需要单批次 H3 24 通道视频 latent。")
+            raise ValueError("保存 latent 需要单批次 H3 24 通道视频 latent。")
         name = f"seg_{seg.timeline_index + 1:04d}"
         latent_name = name + ".safetensors"
         _save_tensors(self.root / latent_name, {"video": video, "audio": audio})
@@ -236,20 +198,6 @@ class DeferredDecodeRun:
         self._publish()
         return record
 
-    def decode_preview(self, samples: dict, record: dict):
-        frames = _decode_video(samples, self.tae, tiled=False, tile_size=512, temporal_size=64)
-        frames, _ = _crop_export(frames, None, record, self.manifest["frame_rate"])
-        self.save_preview(record, frames)
-        return frames
-
-    def save_preview(self, record: dict, frames):
-        from ..lib.video_export import write_frames_to_mp4
-
-        name = Path(record["latent"]).stem + "_tae.mp4"
-        write_frames_to_mp4(self.root / name, frames, fps=self.manifest["frame_rate"])
-        record["preview"] = name
-        self._publish()
-
     def update_export_length(self, index: int, frame_count: int):
         record = next((item for item in self.manifest["segments"] if item["index"] == index), None)
         if record is not None:
@@ -257,15 +205,31 @@ class DeferredDecodeRun:
             self._publish()
 
     def trim_previous(self, index: int, frames):
-        record = next((item for item in self.manifest["segments"] if item["index"] == index), None)
-        if record is not None:
-            record["export_frames"] = int(frames.shape[0])
-            self._publish()
-            self.save_preview(record, frames)
+        self.update_export_length(index, int(frames.shape[0]))
 
     def finish(self):
         self.manifest["status"] = "complete"
         self._publish()
+
+
+class DeferredDecodeRun(LatentSaveRun):
+    def __init__(self, plan):
+        if plan.refine or plan.face_refine:
+            raise ValueError("延后 VAE 解码暂不兼容导演台上的 Refine / FaceRefine，请断开它们后再运行。")
+        if plan.selflift and float(plan.selflift.get("rho") or 0) > 1e-8:
+            raise ValueError("延后解码要求 SelfLift.rho=0；像素锚混合会在采样中调用正式 VAE 解码。")
+        super().__init__(plan)
+
+
+def _available_output_path(root: Path, name: str) -> Path:
+    path = root / name
+    if not path.exists():
+        return path
+    for suffix in range(1, 1000000):
+        candidate = path.with_name(f"{path.stem}_{suffix:03d}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise ValueError(f"Too many decoded output files: {path}")
 
 
 def read_manifest(folder: str) -> tuple[Path, dict]:
@@ -335,10 +299,13 @@ def decode_latent_run(
     mode, fps = manifest["audio_mode"], float(manifest["frame_rate"])
     if mode == AUDIO_MODE_GENERATE and audio_vae is None:
         raise ValueError("该任务包含生成音频，请连接 audio_vae；不会静默丢弃音频。")
-    base = Path(output_directory.strip()).expanduser() if output_directory.strip() else root / "decoded"
-    if not base.is_absolute():
-        base = Path(folder_paths.get_output_directory()) / base
-    destination = _new_run_directory(base.resolve())
+    destination = root
+    if output_directory.strip():
+        base = Path(output_directory.strip()).expanduser()
+        if not base.is_absolute():
+            base = Path(folder_paths.get_output_directory()) / base
+        destination = _new_run_directory(base.resolve())
+    decode_manifest = _available_output_path(destination, "decode.json")
     report = [f"Latent task: {root}", f"Decoded output: {destination}"]
     if manifest.get("status") != "complete":
         report.append("采样任务未全部完成；仅解码已经落盘的分段。")
@@ -368,9 +335,9 @@ def decode_latent_run(
             frames = match_export_opening_grade(frames, previous_frames)
         elif manifest.get("continuity_grade_align") and int(record["trim_frames"]) > 0:
             report.append(f"Segment #{index + 1}: 本轮未解码相邻前段，跳过段首光色对齐。")
-        path = write_frames_to_mp4(destination / f"seg_{index + 1:04d}.mp4", frames, fps=fps, audio=audio)
+        path = write_frames_to_mp4(_available_output_path(destination, f"seg_{index + 1:04d}.mp4"), frames, fps=fps, audio=audio)
         outputs.append({"timeline_index": index, "video": str(path), "frames": int(frames.shape[0])})
-        _write_json(destination / "decode.json", {"source": str(root), "outputs": outputs, "status": "decoding"})
+        _write_json(decode_manifest, {"source": str(root), "outputs": outputs, "status": "decoding"})
         report.append(f"Segment #{index + 1}: {frames.shape[0]} frames → {path}")
         counts.append(int(frames.shape[0]))
         if return_images:
@@ -396,7 +363,7 @@ def decode_latent_run(
         audio = _merge_generated_segment_audios(
             SimpleNamespace(segments=[]), merge_audios, total_frames=sum(counts), fps=fps, frame_counts=counts,
         ) if mode != "mute" else None
-        path = write_frames_to_mp4(destination / "merged.mp4", merged, fps=fps, audio=audio)
+        path = write_frames_to_mp4(_available_output_path(destination, "merged.mp4"), merged, fps=fps, audio=audio)
         report.append(f"Merged: {path}")
-    _write_json(destination / "decode.json", {"source": str(root), "outputs": outputs, "status": "complete"})
+    _write_json(decode_manifest, {"source": str(root), "outputs": outputs, "status": "complete"})
     return frames_out, audios_out, fps, sum(counts), "\n".join(report), str(destination)

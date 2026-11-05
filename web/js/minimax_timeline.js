@@ -276,6 +276,7 @@ function normalizeOutputContinuity(output = {}) {
         continuityGradeAlign: isContinuityGradeAlign(output),
         fl2vPromptReinforcement: isFl2vPromptReinforcementEnabled(output),
         deferVaeDecode: [true, 1, "1", "true", "True", "on"].includes(output.deferVaeDecode ?? output.defer_vae_decode),
+        saveSampledLatents: [true, 1, "1", "true", "True", "on"].includes(output.saveSampledLatents ?? output.save_sampled_latents),
         executionMode: ["staged_segment", "staged_batch"].includes(output.executionMode ?? output.execution_mode)
             ? (output.executionMode ?? output.execution_mode) : "standard",
         latentOutputDir: String(output.latentOutputDir ?? output.latent_output_dir ?? "").trim(),
@@ -2172,6 +2173,7 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityGradeAlign: data.output?.continuityGradeAlign ?? data.output?.continuity_grade_align,
             fl2vPromptReinforcement: data.output?.fl2vPromptReinforcement ?? data.output?.fl2v_prompt_reinforcement,
             deferVaeDecode: data.output?.deferVaeDecode ?? data.output?.defer_vae_decode,
+            saveSampledLatents: data.output?.saveSampledLatents ?? data.output?.save_sampled_latents,
             executionMode: data.output?.executionMode ?? data.output?.execution_mode,
             latentOutputDir: data.output?.latentOutputDir ?? data.output?.latent_output_dir,
         });
@@ -3179,11 +3181,15 @@ class MiniMaxH3DirectorEditor {
                 <option value="staged_segment" data-i18n="execution.stagedSegment">单分段分阶段</option>
                 <option value="staged_batch" data-i18n="execution.stagedBatch">全分段分阶段</option>
             </select>
+            <label data-i18n-title="tooltip.saveSampledLatents">
+                <input type="checkbox" data-r="out-save-sampled-latents">
+                <span data-i18n="output.saveSampledLatents">采样完成立即保存 latent</span>
+            </label>
             <label data-i18n-title="tooltip.deferVaeDecode">
                 <input type="checkbox" data-r="out-defer-vae-decode">
                 <span data-i18n="output.deferVaeDecode">延后 VAE 解码</span>
             </label>
-            <input type="text" class="bd-select hidden" data-r="out-latent-dir" style="width:240px;max-width:100%" data-i18n-title="tooltip.latentOutputDir" placeholder="minimax_latents">
+            <input type="text" class="bd-select hidden" data-r="out-latent-dir" style="width:240px;max-width:100%" data-i18n-title="tooltip.latentOutputDir" placeholder="minimax_seg_export">
             <span class="hidden" data-r="out-max-frames-wrap" hidden aria-hidden="true">
                 <label data-i18n="output.maxFrames">最大帧数</label>
                 <input type="number" class="bd-num" data-r="out-max-frames" min="0" max="999999" step="1" value="0" style="width:64px">
@@ -3569,6 +3575,7 @@ class MiniMaxH3DirectorEditor {
         this.outExportMode = this.root.querySelector('[data-r="out-export-mode"]');
         this.fl2vPromptReinforcementCb = this.root.querySelector('[data-r="out-fl2v-prompt-reinforcement"]');
         this.deferVaeDecodeCb = this.root.querySelector('[data-r="out-defer-vae-decode"]');
+        this.saveSampledLatentsCb = this.root.querySelector('[data-r="out-save-sampled-latents"]');
         this.executionModeSelect = this.root.querySelector('[data-r="out-execution-mode"]');
         this.latentOutputDirInput = this.root.querySelector('[data-r="out-latent-dir"]');
         this.segmentContinuityWrap = this.root.querySelector('[data-r="segment-continuity-wrap"]');
@@ -3903,6 +3910,9 @@ class MiniMaxH3DirectorEditor {
         }
         if (this.deferVaeDecodeCb) {
             this.deferVaeDecodeCb.onchange = () => this.onOutputField("deferVaeDecode", this.deferVaeDecodeCb.checked);
+        }
+        if (this.saveSampledLatentsCb) {
+            this.saveSampledLatentsCb.onchange = () => this.onOutputField("saveSampledLatents", this.saveSampledLatentsCb.checked);
         }
         if (this.executionModeSelect) {
             this.executionModeSelect.onchange = () => this.onOutputField("executionMode", this.executionModeSelect.value);
@@ -6634,6 +6644,7 @@ class MiniMaxH3DirectorEditor {
         if (this.outExportMode) this.outExportMode.value = out.exportMode === "segments" ? "segments" : "all";
         if (this.fl2vPromptReinforcementCb) this.fl2vPromptReinforcementCb.checked = isFl2vPromptReinforcementEnabled(out);
         if (this.deferVaeDecodeCb) this.deferVaeDecodeCb.checked = !!out.deferVaeDecode;
+        if (this.saveSampledLatentsCb) this.saveSampledLatentsCb.checked = !!out.saveSampledLatents;
         if (this.executionModeSelect) this.executionModeSelect.value = out.executionMode || "standard";
         if (this.latentOutputDirInput) {
             this.latentOutputDirInput.value = String(out.latentOutputDir || "");
@@ -7062,6 +7073,8 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.fl2vPromptReinforcement = !!value;
         } else if (key === "deferVaeDecode") {
             this.timeline.output.deferVaeDecode = !!value;
+        } else if (key === "saveSampledLatents") {
+            this.timeline.output.saveSampledLatents = !!value;
         } else if (key === "executionMode") {
             this.timeline.output.executionMode = ["staged_segment", "staged_batch"].includes(value) ? value : "standard";
         } else if (key === "latentOutputDir") {
@@ -7194,6 +7207,7 @@ class MiniMaxH3DirectorEditor {
             ? !!this.fl2vPromptReinforcementCb.checked
             : isFl2vPromptReinforcementEnabled(this.timeline.output);
         if (this.deferVaeDecodeCb) this.timeline.output.deferVaeDecode = !!this.deferVaeDecodeCb.checked;
+        if (this.saveSampledLatentsCb) this.timeline.output.saveSampledLatents = !!this.saveSampledLatentsCb.checked;
         if (this.executionModeSelect) this.timeline.output.executionMode = this.executionModeSelect.value;
         if (this.latentOutputDirInput) this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {

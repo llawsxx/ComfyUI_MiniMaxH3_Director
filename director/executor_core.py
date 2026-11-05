@@ -460,7 +460,7 @@ def execute_director_plan_core(
         validate_staged_execution(plan, model=model, vae=vae, audio_vae=audio_vae, clip=clip)
         clear_vram_between_segments = False
         cleanup_segment_vram(enabled=True, unload_models=True)
-    from .deferred_decode import DeferredDecodeRun, deferred_decode_enabled
+    from .deferred_decode import DeferredDecodeRun, LatentSaveRun, deferred_decode_enabled, save_sampled_latents_enabled
 
     deferred = DeferredDecodeRun(plan) if deferred_decode_enabled(plan) else None
     plan.deferred_decode_run_dir = str(deferred.root) if deferred is not None else None
@@ -586,14 +586,20 @@ def execute_director_plan_core(
     # One timestamp folder per execute so all segments of this run stay together.
     mp4_run_dir = new_segment_mp4_run_dir(plan) if deferred is None else None
     plan.segment_mp4_run_dir = str(mp4_run_dir) if mp4_run_dir is not None else None
+    latent_run = deferred
+    if latent_run is None and save_sampled_latents_enabled(plan):
+        latent_run = LatentSaveRun(plan, root=mp4_run_dir)
+    plan.latent_save_run_dir = str(latent_run.root) if latent_run is not None else None
     if mp4_run_dir is not None:
         reports.append(f"Segment mp4 export dir: {mp4_run_dir}")
     if deferred is not None:
         reports.append(
-            f"延后 VAE 解码：原始 AV latent + 无声 TAE 预览 → {deferred.root}。"
-            "images 仅为 TAE 预览；请用 Director Latent Decode 正式解码。"
+            f"延后 VAE 解码：仅保存原始 AV latent → {deferred.root}，不生成 TAE 视频。"
+            "IMAGE / AUDIO 输出已阻断；请用 Director Latent Decode 正式解码。"
             "不写入或覆盖普通成片缓存，未选中分段不拼入本轮任务。"
         )
+    elif latent_run is not None:
+        reports.append(f"采样完成立即保存 latent → {latent_run.root}；保存一采原始 AV latent，随后继续原解码/精修流程。")
     if live_tae_preview:
         reports.append(
             f"Live preview: ON — 采样中 TAE 动态预览（{live_preview_frames} 帧 @ {live_preview_fps:g}fps；"
@@ -1086,8 +1092,8 @@ def execute_director_plan_core(
                     raise ValueError("段间引导裁剪会清空上一段，无法继续分阶段执行。")
                 staged_tail_trims[prev_idx] = staged_tail_trims.get(prev_idx, 0) + int(prev_export_trim)
                 completed_av_handoff[prev_idx]["export_frames"] = new_length
-                if deferred is not None:
-                    deferred.update_export_length(prev_idx, new_length)
+                if latent_run is not None:
+                    latent_run.update_export_length(prev_idx, new_length)
                 trimmed_prev_export = int(prev_export_trim)
                 prev_export_trim = 0
             if prev_export_trim > 0:
@@ -1181,6 +1187,8 @@ def execute_director_plan_core(
                         if deferred is not None:
                             deferred.trim_previous(prev_idx, prev_chunk)
                         else:
+                            if latent_run is not None:
+                                latent_run.trim_previous(prev_idx, prev_chunk)
                             save_segment_cache(
                                 node_id,
                                 prev_seg,
@@ -1515,7 +1523,7 @@ def execute_director_plan_core(
                 shift_cache=shift_cache,
             )
 
-        deferred_record = None
+        sample_record = None
         if staged:
             samples = cpu_handoff(samples)
             completed_av_latents[seg.index] = samples
@@ -1530,32 +1538,31 @@ def execute_director_plan_core(
                 "trim_frames": int(trim_frames), "export_frames": int(staged_export_len),
                 "sample_frames": int(sample_len), "official_mc_length": False,
             }
-            if deferred is not None:
-                deferred_record = deferred.save_sample(
-                    seg, samples, trim_frames=trim_frames,
-                    export_frames=staged_export_len, sample_frames=sample_len,
-                )
             positive = negative = latent = None
             sample_s = time.perf_counter() - t_sample
+
+        if latent_run is not None:
+            saved_export_len = continuity_export_len(
+                trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
+                target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
+            )
+            sample_record = latent_run.save_sample(
+                seg, samples, trim_frames=trim_frames,
+                export_frames=saved_export_len, sample_frames=sample_len,
+            )
+            reports.append(f"Segment {ui_idx + 1}: AV latent saved → {latent_run.root / sample_record['latent']}")
 
         first_pass_samples = samples
         completed_first_pass_av[seg.index] = first_pass_samples
         if staged:
             yield "sampled"
         if deferred is not None:
-            export_len = continuity_export_len(
-                trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
-                target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
-            )
-            record = deferred_record if deferred_record is not None else deferred.save_sample(
-                seg, samples, trim_frames=trim_frames,
-                export_frames=export_len, sample_frames=sample_len,
-            )
+            record = sample_record
             report_director_progress(
                 node_id, segment_index=progress_index, segment_total=seg_total,
                 phase="decode", phase_value=0, phase_max=1, **meta,
             )
-            chunk = deferred.decode_preview(samples, record)
+            chunk = torch.full((1, 1, 1, 3), 0.5).expand(int(record["export_frames"]), 1, 1, 3)
             completed_av_latents[seg.index] = samples
             completed_av_handoff[seg.index] = {
                 "trim_frames": int(trim_frames), "export_frames": int(chunk.shape[0]),
@@ -1570,8 +1577,7 @@ def execute_director_plan_core(
                 phase="decode", phase_value=1, phase_max=1, **meta,
             )
             reports.append(
-                f"Segment {ui_idx + 1}: AV latent saved → {deferred.root / record['latent']}; "
-                f"TAE preview → {deferred.root / record['preview']}"
+                f"Segment {ui_idx + 1}: VAE 解码已延后，未生成预览视频。"
             )
             return chunk, empty_audio_dict(), chunk, chunk
         first_pass_gpu = None
@@ -2193,8 +2199,8 @@ def execute_director_plan_core(
     if not output_chunks and not segment_outputs:
         raise ValueError("Director plan produced no segments.")
 
-    if deferred is not None:
-        deferred.finish()
+    if latent_run is not None:
+        latent_run.finish()
     report_director_finish(node_id, seg_total)
     export_chunks = output_chunks if output_chunks else segment_outputs
     export_pre_chunks = output_pre_chunks if output_pre_chunks else segment_pre_refine
