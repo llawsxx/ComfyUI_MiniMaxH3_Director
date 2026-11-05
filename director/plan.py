@@ -315,6 +315,7 @@ class DirectorPlan:
     external_groups_witness: dict | None = None
     # Set during execute when export_mode=segments (minimax_seg_export folder).
     segment_mp4_run_dir: str | None = None
+    deferred_decode_run_dir: str | None = None
 
     @property
     def segment_count(self) -> int:

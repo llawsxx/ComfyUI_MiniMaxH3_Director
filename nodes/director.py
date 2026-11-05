@@ -264,7 +264,7 @@ class MiniMaxH3Director:
 
         return first_pass_cache_disk_signature(unique_id)
 
-    RETURN_TYPES = ("IMAGE", "AUDIO", "FLOAT", "INT", "IMAGE", "STRING", "IMAGE", "IMAGE")
+    RETURN_TYPES = ("IMAGE", "AUDIO", "FLOAT", "INT", "IMAGE", "STRING", "IMAGE", "IMAGE", "STRING")
     RETURN_NAMES = (
         "images",
         "audio",
@@ -274,14 +274,17 @@ class MiniMaxH3Director:
         "report",
         "images_pre_refine",
         "images_pre_face_refine",
+        "latent_folder",
     )
-    OUTPUT_IS_LIST = (True, True, False, False, True, False, True, True)
+    OUTPUT_IS_LIST = (True, True, False, False, True, False, True, True, False)
     FUNCTION = "execute"
     CATEGORY = _CATEGORY
     DESCRIPTION = (
         "MiniMax H3 Director: MiniMaxH3ImageToVideo / ReferenceToVideo conditioning, "
         "single-stage KSampler + MiniMaxH3SigmaShift, LTXVSeparateAVLatent decode. "
         "Supports t2v / i2v / fl2v / r2v / v2v / rv2v. "
+        "Deferred decode saves original AV latents and TAE previews; latent_folder "
+        "can be opened by Director Latent Decode without re-sampling. "
         "Optional i2v_groups / r2v_groups accept multi-group packs from Director Group nodes "
         "(external priority over UI cards). Optional semantic_bridge accepts "
         "MiniMax H3 Director Semantic Bridge (cond-token student; Ref2VA forced-compat). "
@@ -392,7 +395,7 @@ class MiniMaxH3Director:
                 )
             )
 
-            return finalize_director_outputs(
+            result = finalize_director_outputs(
                 plan,
                 combined,
                 segment_outputs,
@@ -407,6 +410,7 @@ class MiniMaxH3Director:
                 export_pre_face_refine=export_pre_face_refine,
                 block_final_images=held_for_confirmation,
             )
+            return (*result, plan.deferred_decode_run_dir or "")
         finally:
             # Full source/reference PCM is execution-scoped.
             cache = getattr(plan, "audio_decode_cache", None)

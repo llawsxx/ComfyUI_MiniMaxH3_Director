@@ -31,12 +31,33 @@
 
 参考音频槽可直接选择已有视频，或从本地选择音频/视频；视频会立即提取首条音轨为 FLAC，结果直接保存到 `input/`。本地视频只在临时目录中用于提取，不会作为视频素材保存。音频沿用 ComfyUI 现有上传规则：同名同内容直接复用，同名不同内容自动添加序号且不会覆盖；当前素材组也不会重复添加同一路径。
 
+### 延后 VAE 解码与独立 Latent Decode
+
+在导演台输出栏开启 **「延后 VAE 解码」** 后，每段采样完成会立即保存原始视频和音频 latent，再用 TAEH3 解码保存无声预览。不会运行正式视频/音频 VAE 解码，下一段仍使用原始 latent 做段间引导（含「引导+重绘」）。普通生成模式默认不变。
+
+- 预先放置 `ComfyUI/models/vae_approx/taeh3.safetensors`。缺少权重或 ffmpeg 会在采样前报错，不会伪装成 Latent2RGB 预览。
+- 同时兼容逐 latent 步的 2D TAE 和原生时序 TAE 权重。2D 版本会解码每个 latent 步，再按 H3 的 `1/4/4/4/4` 时间跨度保持画面以对齐预览时长；不代表正式 VAE 的逐帧运动细节。
+- 输出栏的目录留空时保存到 `ComfyUI/output/minimax_latents/<时间戳>/`；支持相对 `output/` 的路径或绝对路径，每次运行创建独立子目录。
+- 任务内含 `manifest.json`、`seg_0001.safetensors`（原始 AV latent）和 `seg_0001_tae.mp4`（预览）。音频模式为「原声」时额外保存源音频，不依赖后续还能访问原素材。
+- 导演台 `images` / `images_pre_refine` 是 **TAE 预览**，`audio` 为静音；新增 `latent_folder` 输出任务路径，原输出口顺序不变。保留原来的下游输出节点即可触发执行；如果只想保存任务文件夹，可将 `latent_folder` 接到 ComfyUI 自带的 **Preview as Text（PreviewAny）**，不必连接 SaveVideo。
+- 支持普通采样和 `rho=0` 的 SelfLift；SelfLift 像素锚（`rho>0`）需要采样中解码，会提前报错。请断开导演台上的 Refine / FaceRefine。两者涉及后续精修/修脸，不会在延后模式下偷偷跳过。
+- 段间引导必须有同分辨率的上一段原始 AV latent，不会用 TAE 画面重新编码。选择运行时仅保存本轮采样段，不混入普通成片缓存；建议把相邻段一起运行。
+
+随后在**另一个工作流**添加 **MiniMax H3 Director Latent Decode**：
+
+1. `latent_folder` 填任务目录（或其 `manifest.json`）；接正式 `video_vae`，生成音频任务还需接 `audio_vae`。无需 MODEL / CLIP，可重启 ComfyUI 后运行。
+2. `segments` 留空或 `all` 解码全部，也可填 `1,3-5`（原时间轴编号，从 1 开始）。自动按保存的帧率、上下文裁剪量和最终导出长度解码，避免重复上下文及音画错位。
+3. 默认分段保存 MP4 到任务目录的 `decoded/<时间戳>/`，也可自定义输出目录。每段完成即落盘；即使采样任务中途停止，已保存的 latent 仍能单独解码。
+4. `tiled_decode` 可使用分块 VAE 解码；`merge_video` 另存合并视频，需保留全部选中段画面于内存。默认 `return_images=false` 只保存文件并阻断 IMAGE/AUDIO 输出以节省内存；需接下游画面节点时再开启。
+
+正式解码始终读取 safetensors，不会从 TAE 视频反推 latent。接缝调色在正式解码时根据真实画面重算。新节点和 Python 执行逻辑需要**重启 ComfyUI**，然后强制刷新浏览器。
+
 ### 输入 / 输出
 
 **输入：** `model` → `video_vae` → `audio_vae` → `clip`  
 **可选：** `i2v_groups`（Image to Video 多组）/ `r2v_groups`（Reference to Video 多组）/ `semantic_bridge`（`MiniMax H3 Director Semantic Bridge`）/ `selflift`（`MiniMax H3 Director SelfLift`）/ `refine`（`MiniMax H3 Director Refine`）
 
-**输出：** `images` → `audio` → `fps` → `frame_count` → `source_images` → `report` → `images_pre_refine`
+**输出：** `images` → `audio` → `fps` → `frame_count` → `source_images` → `report` → `images_pre_refine` → `images_pre_face_refine` → `latent_folder`
 
 > CLIP Loader 的 **type 必须选 `minimax`**（Qwen3-VL）。  
 > `t2v` / `i2v` / `fl2v` 用 **fl2va** UNET；`r2v` / `v2v` / `rv2v` 用 **ref2va** UNET。

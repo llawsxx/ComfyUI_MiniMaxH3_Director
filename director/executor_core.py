@@ -452,6 +452,10 @@ def execute_director_plan_core(
     plan.sample_shift_audio = float(shift_audio)
     audio_mode = resolve_audio_mode(plan)
     decode_audio = audio_mode == AUDIO_MODE_GENERATE
+    from .deferred_decode import DeferredDecodeRun, deferred_decode_enabled
+
+    deferred = DeferredDecodeRun(plan) if deferred_decode_enabled(plan) else None
+    plan.deferred_decode_run_dir = str(deferred.root) if deferred is not None else None
     # UI toggle on the player bar (timeline.liveTaePreview); default off.
     # When off: skip step TAE and the post-sample full-segment JPEG playback encode.
     raw_live = (plan.raw or {}).get("liveTaePreview", (plan.raw or {}).get("live_tae_preview", False))
@@ -461,6 +465,8 @@ def execute_director_plan_core(
         "liveAudioPreview", (plan.raw or {}).get("live_audio_preview", False)
     )
     live_audio_preview = raw_live_audio in (True, 1, "1", "true", "True", "on")
+    if deferred is not None:
+        live_audio_preview = False
     try:
         audio_preview_every = int(
             (plan.raw or {}).get(
@@ -497,7 +503,8 @@ def execute_director_plan_core(
     all_segments = plan.segments
     # Drop caches for deleted/shortened timelines. Use every segment index (not
     # run_indices): unselected「选择运行」slots still fill merge/export from disk.
-    prune_segment_cache(node_id, [seg.index for seg in all_segments])
+    if deferred is None:
+        prune_segment_cache(node_id, [seg.index for seg in all_segments])
     # Strictly honor「选择运行」— never force-sample unselected segments.
     run_indices = plan.run_indices if plan.run_indices is not None else frozenset(range(len(all_segments)))
 
@@ -563,10 +570,16 @@ def execute_director_plan_core(
             "BasicGuider/CFGGuider → SamplerCustomAdvanced."
         )
     # One timestamp folder per execute so all segments of this run stay together.
-    mp4_run_dir = new_segment_mp4_run_dir(plan)
+    mp4_run_dir = new_segment_mp4_run_dir(plan) if deferred is None else None
     plan.segment_mp4_run_dir = str(mp4_run_dir) if mp4_run_dir is not None else None
     if mp4_run_dir is not None:
         reports.append(f"Segment mp4 export dir: {mp4_run_dir}")
+    if deferred is not None:
+        reports.append(
+            f"延后 VAE 解码：原始 AV latent + 无声 TAE 预览 → {deferred.root}。"
+            "images 仅为 TAE 预览；请用 Director Latent Decode 正式解码。"
+            "不写入或覆盖普通成片缓存，未选中分段不拼入本轮任务。"
+        )
     if live_tae_preview:
         reports.append(
             f"Live preview: ON — 采样中 TAE 动态预览（{live_preview_frames} 帧 @ {live_preview_fps:g}fps；"
@@ -594,7 +607,9 @@ def execute_director_plan_core(
         reports.append(
             f"Output: 输出修脸前已开启（images_pre_face_refine 为贴回前整段视频{extra}）。"
         )
-    if audio_mode == AUDIO_MODE_MUTE:
+    if deferred is not None:
+        reports.append("Audio: deferred — 音频 latent 随视频保存，正式解码阶段按原音频模式导出。")
+    elif audio_mode == AUDIO_MODE_MUTE:
         reports.append("Audio: muted — skip audio VAE decode, silent AUDIO output.")
     elif audio_mode == AUDIO_MODE_SOURCE:
         reports.append("Audio: source — skip audio VAE decode, use original timeline audio.")
@@ -906,6 +921,8 @@ def execute_director_plan_core(
         # fl2v keeps last_frame when continuity is on; first_frame yields to context head.
         # r2v/v2v/rv2v: always eligible for MC when continuity_active (refs stay).
         i2v_new_anchor = seg.task_key == "i2v" and first_frame is not None
+        if deferred is not None and continuity_active and not i2v_new_anchor and prev_av is None:
+            deferred.validate_context({}, None)
         use_motion_context = (
             continuity_active
             and not i2v_new_anchor
@@ -963,6 +980,8 @@ def execute_director_plan_core(
                 and (prev_av is not None or prev_audio is not None)
             )
             prev_av = select_continuity_pin_latent(latent, prev_first_pass_av, prev_av)
+            if deferred is not None:
+                deferred.validate_context(latent, prev_av)
             if is_continue_mode(plan):
                 from .h3_latent_continue import (
                     apply_latent_continue,
@@ -1093,16 +1112,19 @@ def execute_director_plan_core(
                         prev_handoff["export_frames"] = int(prev_chunk.shape[0])
                         prev_handoff["phase_align_trim"] = int(prev_export_trim)
                         completed_av_handoff[prev_idx] = prev_handoff
-                        save_segment_cache(
-                            node_id,
-                            prev_seg,
-                            plan,
-                            prev_chunk,
-                            av_latent=completed_av_latents.get(prev_idx),
-                            handoff=prev_handoff,
-                            audio=completed_audios.get(prev_idx),
-                            replace_audio=False,
-                        )
+                        if deferred is not None:
+                            deferred.trim_previous(prev_idx, prev_chunk)
+                        else:
+                            save_segment_cache(
+                                node_id,
+                                prev_seg,
+                                plan,
+                                prev_chunk,
+                                av_latent=completed_av_latents.get(prev_idx),
+                                handoff=prev_handoff,
+                                audio=completed_audios.get(prev_idx),
+                                replace_audio=False,
+                            )
                         # Rewrite incremental mp4 so mid-run files match trimmed length.
                         if hold_after_first:
                             pre_path = maybe_export_segment_mp4(
@@ -1421,6 +1443,38 @@ def execute_director_plan_core(
 
         first_pass_samples = samples
         completed_first_pass_av[seg.index] = first_pass_samples
+        if deferred is not None:
+            export_len = continuity_export_len(
+                trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
+                target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
+            )
+            record = deferred.save_sample(
+                seg, samples, trim_frames=trim_frames,
+                export_frames=export_len, sample_frames=sample_len,
+            )
+            report_director_progress(
+                node_id, segment_index=progress_index, segment_total=seg_total,
+                phase="decode", phase_value=0, phase_max=1, **meta,
+            )
+            chunk = deferred.decode_preview(samples, record)
+            completed_av_latents[seg.index] = samples
+            completed_av_handoff[seg.index] = {
+                "trim_frames": int(trim_frames), "export_frames": int(chunk.shape[0]),
+                "sample_frames": int(sample_len), "official_mc_length": False,
+            }
+            completed_outputs[seg.index] = chunk
+            completed_pre_refine[seg.index] = chunk
+            completed_pre_face[seg.index] = chunk
+            segment_export_lengths[seg.index] = int(chunk.shape[0])
+            report_director_progress(
+                node_id, segment_index=progress_index, segment_total=seg_total,
+                phase="decode", phase_value=1, phase_max=1, **meta,
+            )
+            reports.append(
+                f"Segment {ui_idx + 1}: AV latent saved → {deferred.root / record['latent']}; "
+                f"TAE preview → {deferred.root / record['preview']}"
+            )
+            return chunk, empty_audio_dict(), chunk, chunk
         first_pass_gpu = None
         pre_export = None
         run_refine = will_refine and not hold_after_first
@@ -1878,7 +1932,7 @@ def execute_director_plan_core(
                 output_segments.append(seg)
             continue
 
-        if plan.export_mode != "all":
+        if deferred is not None or plan.export_mode != "all":
             continue
 
         # Prefer exact cache; pipeline-stale disk render is ok. A different
@@ -1979,6 +2033,8 @@ def execute_director_plan_core(
     if not output_chunks and not segment_outputs:
         raise ValueError("Director plan produced no segments.")
 
+    if deferred is not None:
+        deferred.finish()
     report_director_finish(node_id, seg_total)
     export_chunks = output_chunks if output_chunks else segment_outputs
     export_pre_chunks = output_pre_chunks if output_pre_chunks else segment_pre_refine
@@ -2012,7 +2068,7 @@ def execute_director_plan_core(
         else:
             export_audios.append({})
             missing_audio.append(seg.index + 1)
-    if missing_audio and plan.export_mode == "all":
+    if missing_audio and plan.export_mode == "all" and deferred is None:
         reports.append(
             "Audio cache missing for segment(s) "
             f"{missing_audio} — those slots are silent in the merge. "

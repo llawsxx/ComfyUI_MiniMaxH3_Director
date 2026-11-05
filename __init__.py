@@ -9,6 +9,7 @@ from .nodes.conditioning import (
     MiniMaxH3DirectorPlannerConditioning,
 )
 from .nodes.director import MiniMaxH3Director
+from .nodes.director_latent_decode import MiniMaxH3DirectorLatentDecode
 from .nodes.director_refine import MiniMaxH3DirectorRefine
 from .nodes.director_selflift import MiniMaxH3DirectorSelfLift
 from .nodes.director_semantic_bridge import MiniMaxH3DirectorSemanticBridge
@@ -21,6 +22,7 @@ from .nodes.director_groups import (
 
 NODE_CLASS_MAPPINGS = {
     "MiniMaxH3Director": MiniMaxH3Director,
+    "MiniMaxH3DirectorLatentDecode": MiniMaxH3DirectorLatentDecode,
     "MiniMaxH3DirectorRefine": MiniMaxH3DirectorRefine,
     "MiniMaxH3DirectorSelfLift": MiniMaxH3DirectorSelfLift,
     "MiniMaxH3DirectorSemanticBridge": MiniMaxH3DirectorSemanticBridge,
@@ -38,6 +40,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3Director": "MiniMaxH3Director",
+    "MiniMaxH3DirectorLatentDecode": "MiniMax H3 Director Latent Decode",
     "MiniMaxH3DirectorRefine": "MiniMax H3 Director Refine",
     "MiniMaxH3DirectorSelfLift": "MiniMax H3 Director SelfLift",
     "MiniMaxH3DirectorSemanticBridge": "MiniMax H3 Director Semantic Bridge",

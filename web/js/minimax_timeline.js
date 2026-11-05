@@ -275,6 +275,8 @@ function normalizeOutputContinuity(output = {}) {
         continuityKeepTail: isContinuityKeepTail(output),
         continuityGradeAlign: isContinuityGradeAlign(output),
         fl2vPromptReinforcement: isFl2vPromptReinforcementEnabled(output),
+        deferVaeDecode: [true, 1, "1", "true", "True", "on"].includes(output.deferVaeDecode ?? output.defer_vae_decode),
+        latentOutputDir: String(output.latentOutputDir ?? output.latent_output_dir ?? "").trim(),
         audioMode: normalizeAudioMode(output.audioMode ?? output.audio_mode),
         refImageSize: normalizeRefImageSize(output.refImageSize ?? output.ref_image_size),
     };
@@ -2167,6 +2169,8 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityKeepTail: data.output?.continuityKeepTail ?? data.output?.continuity_keep_tail,
             continuityGradeAlign: data.output?.continuityGradeAlign ?? data.output?.continuity_grade_align,
             fl2vPromptReinforcement: data.output?.fl2vPromptReinforcement ?? data.output?.fl2v_prompt_reinforcement,
+            deferVaeDecode: data.output?.deferVaeDecode ?? data.output?.defer_vae_decode,
+            latentOutputDir: data.output?.latentOutputDir ?? data.output?.latent_output_dir,
         });
         // Infer aspectRatio from saved width/height when older payloads omitted the label.
         if (!data.output.aspectRatio && data.output.width > 0 && data.output.height > 0) {
@@ -3166,6 +3170,11 @@ class MiniMaxH3DirectorEditor {
                 <input type="checkbox" data-r="out-fl2v-prompt-reinforcement">
                 <span data-i18n="output.fl2vPromptReinforcement">首尾帧提示词强化</span>
             </label>
+            <label data-i18n-title="tooltip.deferVaeDecode">
+                <input type="checkbox" data-r="out-defer-vae-decode">
+                <span data-i18n="output.deferVaeDecode">延后 VAE 解码</span>
+            </label>
+            <input type="text" class="bd-select hidden" data-r="out-latent-dir" style="width:240px;max-width:100%" data-i18n-title="tooltip.latentOutputDir" placeholder="minimax_latents">
             <span class="hidden" data-r="out-max-frames-wrap" hidden aria-hidden="true">
                 <label data-i18n="output.maxFrames">最大帧数</label>
                 <input type="number" class="bd-num" data-r="out-max-frames" min="0" max="999999" step="1" value="0" style="width:64px">
@@ -3550,6 +3559,8 @@ class MiniMaxH3DirectorEditor {
         this.outMaxFrames = this.root.querySelector('[data-r="out-max-frames"]');
         this.outExportMode = this.root.querySelector('[data-r="out-export-mode"]');
         this.fl2vPromptReinforcementCb = this.root.querySelector('[data-r="out-fl2v-prompt-reinforcement"]');
+        this.deferVaeDecodeCb = this.root.querySelector('[data-r="out-defer-vae-decode"]');
+        this.latentOutputDirInput = this.root.querySelector('[data-r="out-latent-dir"]');
         this.segmentContinuityWrap = this.root.querySelector('[data-r="segment-continuity-wrap"]');
         this.segmentContinuityCb = this.root.querySelector('[data-r="segment-continuity-cb"]');
         this.segmentContinuityOverlap = this.root.querySelector('[data-r="segment-continuity-overlap"]');
@@ -3879,6 +3890,18 @@ class MiniMaxH3DirectorEditor {
         this.outExportMode.onchange = () => this.onOutputField("exportMode", this.outExportMode.value);
         if (this.fl2vPromptReinforcementCb) {
             this.fl2vPromptReinforcementCb.onchange = () => this.onOutputField("fl2vPromptReinforcement", this.fl2vPromptReinforcementCb.checked);
+        }
+        if (this.deferVaeDecodeCb) {
+            this.deferVaeDecodeCb.onchange = () => this.onOutputField("deferVaeDecode", this.deferVaeDecodeCb.checked);
+        }
+        if (this.latentOutputDirInput) {
+            this.latentOutputDirInput.oninput = () => {
+                this.timeline.output = this.timeline.output || {};
+                this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
+                this.scheduleTimelineSync();
+            };
+            this.latentOutputDirInput.onchange = () => this.onOutputField("latentOutputDir", this.latentOutputDirInput.value);
+            this.latentOutputDirInput.addEventListener("keydown", (event) => event.stopPropagation());
         }
         if (this.outAudioMode) {
             this.outAudioMode.onchange = () => this.onOutputField("audioMode", this.outAudioMode.value);
@@ -6597,6 +6620,11 @@ class MiniMaxH3DirectorEditor {
         if (this.outMaxFrames) this.outMaxFrames.value = String(out.maxExportFrames ?? 0);
         if (this.outExportMode) this.outExportMode.value = out.exportMode === "segments" ? "segments" : "all";
         if (this.fl2vPromptReinforcementCb) this.fl2vPromptReinforcementCb.checked = isFl2vPromptReinforcementEnabled(out);
+        if (this.deferVaeDecodeCb) this.deferVaeDecodeCb.checked = !!out.deferVaeDecode;
+        if (this.latentOutputDirInput) {
+            this.latentOutputDirInput.value = String(out.latentOutputDir || "");
+            this.latentOutputDirInput.classList.toggle("hidden", !out.deferVaeDecode);
+        }
         if (this.outAudioMode) {
             const am = normalizeAudioMode(out.audioMode);
             this.outAudioMode.value = am;
@@ -7018,6 +7046,10 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.continuityGradeAlign = !!value;
         } else if (key === "fl2vPromptReinforcement") {
             this.timeline.output.fl2vPromptReinforcement = !!value;
+        } else if (key === "deferVaeDecode") {
+            this.timeline.output.deferVaeDecode = !!value;
+        } else if (key === "latentOutputDir") {
+            this.timeline.output.latentOutputDir = String(value || "").trim();
         }
         this.syncOutputUIFromTimeline();
         if (this.isFl2vMode()) updateFl2vDetailUI(this);
@@ -7145,6 +7177,8 @@ class MiniMaxH3DirectorEditor {
         this.timeline.output.fl2vPromptReinforcement = this.fl2vPromptReinforcementCb
             ? !!this.fl2vPromptReinforcementCb.checked
             : isFl2vPromptReinforcementEnabled(this.timeline.output);
+        if (this.deferVaeDecodeCb) this.timeline.output.deferVaeDecode = !!this.deferVaeDecodeCb.checked;
+        if (this.latentOutputDirInput) this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {
             this.timeline.output.exportSourceImages = !!this.exportSourceImagesCb.checked;
         }
@@ -13328,7 +13362,7 @@ function migrateDirectorOutputLinks(node) {
         const inputType = (input?.type || "").toUpperCase();
 
         // Old layouts had report at slot 1 or 3 as STRING.
-        if (inputType === "STRING" && byName.report != null && link.origin_slot !== byName.report) {
+        if (inputType === "STRING" && byName.report != null && [1, 3].includes(link.origin_slot)) {
             link.origin_slot = byName.report;
             continue;
         }
@@ -13347,6 +13381,10 @@ function migrateDirectorOutputLinks(node) {
 function normalizeDirectorOutputs(node) {
     stripDeprecatedDirectorOutputs(node);
     migrateDirectorOutputLinks(node);
+    if (node.outputs?.length === 8 && node.outputs[5]?.name === "report"
+        && !node.outputs.some((output) => output.name === "latent_folder")) {
+        node.addOutput?.("latent_folder", "STRING");
+    }
 }
 
 app.registerExtension({

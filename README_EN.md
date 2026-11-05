@@ -7,6 +7,21 @@ Repository: [AIMixer/ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/Comf
 
 ![MiniMaxH3Director workflow screenshot](docs/screenshot.png)
 
+## Deferred VAE Decode
+
+Enable **Defer VAE decode** in the Director output bar to save original AV latents after each sampled segment, followed by a silent TAEH3 preview. Requires `models/vae_approx/taeh3.safetensors` and ffmpeg. Supports both flat 2D and native temporal TAE weights. Flat weights decode every latent step and hold each image for its H3 `1/4/4/4/4` temporal span to match preview duration; this does not reproduce full-VAE per-frame motion. The folder defaults to `output/minimax_latents/<timestamp>/`; relative paths are based on `output/`, and absolute paths are supported. Each run has its own folder containing `manifest.json`, per-segment AV safetensors and `_tae.mp4` previews. Source-audio mode also persists the original audio.
+
+Director IMAGE outputs are TAE previews in this mode, AUDIO is silent, and a new trailing `latent_folder` output provides the task path. Keep an existing downstream output node to trigger execution, or connect `latent_folder` to ComfyUI's built-in **Preview as Text (PreviewAny)** to save the task folder without SaveVideo. Existing outputs keep their socket indices, and normal graph execution remains unchanged by default. Original latents, not preview pixels, drive inter-segment guide / guide+redraw continuity. A same-resolution original predecessor AV latent is required. Selected runs save only sampled segments and do not overwrite normal rendered-frame caches. Standard sampling and SelfLift with `rho=0` are supported; SelfLift pixel anchoring (`rho>0`) is rejected because it requires decoding during sampling. Disconnect Director Refine / FaceRefine in deferred mode.
+
+In a **separate workflow**, add **MiniMax H3 Director Latent Decode**:
+
+- Enter the task folder or `manifest.json`, connect the full video VAE and, for generated-audio tasks, the audio VAE. No diffusion MODEL or CLIP is needed; decoding also works after restarting ComfyUI.
+- `segments`: blank / `all`, or a 1-based selection such as `1,3-5`. Stored FPS, context trims, phase-alignment trims and export lengths are honored.
+- MP4s are saved incrementally under `<task>/decoded/<timestamp>/` or a custom output folder. Already-saved latents from interrupted sampling runs can also be decoded.
+- Optional tiled VAE decode; `merge_video` saves an additional merged MP4 and requires memory for all selected frames. `return_images=false` saves files and blocks IMAGE/AUDIO outputs by default to conserve memory; enable it when downstream nodes need full segment images/audio.
+
+Full decode always uses the original safetensors, never the TAE preview video. Export opening grade alignment is recomputed from full-VAE frames. **Restart ComfyUI and hard-refresh the browser** after updating.
+
 ## Features
 
 **MiniMaxH3Director** is a single-node director for long-form, multi-segment MiniMax H3 audio–video generation — timeline planning, conditioning, sampling, AV decode, and export in one place. It wraps the official `MiniMaxH3ImageToVideo` / `MiniMaxH3ReferenceToVideo` + `MiniMaxH3SigmaShift` + `KSampler` pipeline with native stereo audio.
@@ -37,7 +52,7 @@ Reference-audio slots can select an existing video or a local audio/video file. 
 **Inputs:** `model` → `video_vae` → `audio_vae` → `clip`  
 **Optional:** `i2v_groups` (Image to Video packs) / `r2v_groups` (Reference to Video packs) / `semantic_bridge` (`MiniMax H3 Director Semantic Bridge`) / `selflift` (`MiniMax H3 Director SelfLift`) / `refine` (`MiniMax H3 Director Refine`)
 
-**Outputs:** `images` → `audio` → `fps` → `frame_count` → `source_images` → `report` → `images_pre_refine`
+**Outputs:** `images` → `audio` → `fps` → `frame_count` → `source_images` → `report` → `images_pre_refine` → `images_pre_face_refine` → `latent_folder`
 
 > CLIP Loader **type must be `minimax`** (Qwen3-VL).  
 > Use **fl2va** UNET for `t2v` / `i2v` / `fl2v`; **ref2va** for `r2v` / `v2v` / `rv2v`.
