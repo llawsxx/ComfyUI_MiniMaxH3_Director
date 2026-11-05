@@ -276,6 +276,8 @@ function normalizeOutputContinuity(output = {}) {
         continuityGradeAlign: isContinuityGradeAlign(output),
         fl2vPromptReinforcement: isFl2vPromptReinforcementEnabled(output),
         deferVaeDecode: [true, 1, "1", "true", "True", "on"].includes(output.deferVaeDecode ?? output.defer_vae_decode),
+        executionMode: ["staged_segment", "staged_batch"].includes(output.executionMode ?? output.execution_mode)
+            ? (output.executionMode ?? output.execution_mode) : "standard",
         latentOutputDir: String(output.latentOutputDir ?? output.latent_output_dir ?? "").trim(),
         audioMode: normalizeAudioMode(output.audioMode ?? output.audio_mode),
         refImageSize: normalizeRefImageSize(output.refImageSize ?? output.ref_image_size),
@@ -2170,6 +2172,7 @@ function parseTimeline(raw, totalFrames, fps) {
             continuityGradeAlign: data.output?.continuityGradeAlign ?? data.output?.continuity_grade_align,
             fl2vPromptReinforcement: data.output?.fl2vPromptReinforcement ?? data.output?.fl2v_prompt_reinforcement,
             deferVaeDecode: data.output?.deferVaeDecode ?? data.output?.defer_vae_decode,
+            executionMode: data.output?.executionMode ?? data.output?.execution_mode,
             latentOutputDir: data.output?.latentOutputDir ?? data.output?.latent_output_dir,
         });
         // Infer aspectRatio from saved width/height when older payloads omitted the label.
@@ -3170,6 +3173,12 @@ class MiniMaxH3DirectorEditor {
                 <input type="checkbox" data-r="out-fl2v-prompt-reinforcement">
                 <span data-i18n="output.fl2vPromptReinforcement">首尾帧提示词强化</span>
             </label>
+            <label data-i18n="output.executionMode">执行方式</label>
+            <select class="bd-select" data-r="out-execution-mode" data-i18n-title="tooltip.executionMode">
+                <option value="standard" data-i18n="execution.standard">原逐段流程</option>
+                <option value="staged_segment" data-i18n="execution.stagedSegment">单分段分阶段</option>
+                <option value="staged_batch" data-i18n="execution.stagedBatch">全分段分阶段</option>
+            </select>
             <label data-i18n-title="tooltip.deferVaeDecode">
                 <input type="checkbox" data-r="out-defer-vae-decode">
                 <span data-i18n="output.deferVaeDecode">延后 VAE 解码</span>
@@ -3560,6 +3569,7 @@ class MiniMaxH3DirectorEditor {
         this.outExportMode = this.root.querySelector('[data-r="out-export-mode"]');
         this.fl2vPromptReinforcementCb = this.root.querySelector('[data-r="out-fl2v-prompt-reinforcement"]');
         this.deferVaeDecodeCb = this.root.querySelector('[data-r="out-defer-vae-decode"]');
+        this.executionModeSelect = this.root.querySelector('[data-r="out-execution-mode"]');
         this.latentOutputDirInput = this.root.querySelector('[data-r="out-latent-dir"]');
         this.segmentContinuityWrap = this.root.querySelector('[data-r="segment-continuity-wrap"]');
         this.segmentContinuityCb = this.root.querySelector('[data-r="segment-continuity-cb"]');
@@ -3893,6 +3903,9 @@ class MiniMaxH3DirectorEditor {
         }
         if (this.deferVaeDecodeCb) {
             this.deferVaeDecodeCb.onchange = () => this.onOutputField("deferVaeDecode", this.deferVaeDecodeCb.checked);
+        }
+        if (this.executionModeSelect) {
+            this.executionModeSelect.onchange = () => this.onOutputField("executionMode", this.executionModeSelect.value);
         }
         if (this.latentOutputDirInput) {
             this.latentOutputDirInput.oninput = () => {
@@ -6621,6 +6634,7 @@ class MiniMaxH3DirectorEditor {
         if (this.outExportMode) this.outExportMode.value = out.exportMode === "segments" ? "segments" : "all";
         if (this.fl2vPromptReinforcementCb) this.fl2vPromptReinforcementCb.checked = isFl2vPromptReinforcementEnabled(out);
         if (this.deferVaeDecodeCb) this.deferVaeDecodeCb.checked = !!out.deferVaeDecode;
+        if (this.executionModeSelect) this.executionModeSelect.value = out.executionMode || "standard";
         if (this.latentOutputDirInput) {
             this.latentOutputDirInput.value = String(out.latentOutputDir || "");
             this.latentOutputDirInput.classList.toggle("hidden", !out.deferVaeDecode);
@@ -7048,6 +7062,8 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.fl2vPromptReinforcement = !!value;
         } else if (key === "deferVaeDecode") {
             this.timeline.output.deferVaeDecode = !!value;
+        } else if (key === "executionMode") {
+            this.timeline.output.executionMode = ["staged_segment", "staged_batch"].includes(value) ? value : "standard";
         } else if (key === "latentOutputDir") {
             this.timeline.output.latentOutputDir = String(value || "").trim();
         }
@@ -7178,6 +7194,7 @@ class MiniMaxH3DirectorEditor {
             ? !!this.fl2vPromptReinforcementCb.checked
             : isFl2vPromptReinforcementEnabled(this.timeline.output);
         if (this.deferVaeDecodeCb) this.timeline.output.deferVaeDecode = !!this.deferVaeDecodeCb.checked;
+        if (this.executionModeSelect) this.timeline.output.executionMode = this.executionModeSelect.value;
         if (this.latentOutputDirInput) this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {
             this.timeline.output.exportSourceImages = !!this.exportSourceImagesCb.checked;

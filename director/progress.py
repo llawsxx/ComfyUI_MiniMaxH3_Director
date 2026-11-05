@@ -58,6 +58,32 @@ def report_director_progress(
         segment_index * phases_per + _phase_index(phase) + phase_fraction,
     )
 
+    from .staged_execution import current_stage
+
+    stage = current_stage.get()
+    phase_label = PHASE_LABELS.get(phase, phase)
+    if stage is not None:
+        mode, stage_index = stage
+        if stage_index == 0:
+            fraction = phase_fraction * 0.5 if phase == "prepare" else 0.5 + phase_fraction * 0.5
+        elif stage_index == 1:
+            if phase == "selflift_low":
+                fraction = phase_fraction * 0.4
+            elif phase == "selflift_lift":
+                fraction = 0.4 + phase_fraction * 0.1
+            elif phase == "selflift_high":
+                fraction = 0.5 + phase_fraction * 0.5
+            else:
+                fraction = phase_fraction if phase == "sample" else 0.0
+        else:
+            fraction = phase_fraction
+        overall_max = max(1, segment_total * 3)
+        overall_value = (
+            stage_index * segment_total + segment_index + fraction
+            if mode == "staged_batch" else segment_index * 3 + stage_index + fraction
+        )
+        phase_label = f"阶段 {stage_index + 1}/3 · " + ("条件编码", "视频采样", "AV 解码")[stage_index]
+
     remaining_segments = max(0, segment_total - segment_index - 1)
     if phase == "finish":
         overall_value = overall_max
@@ -82,7 +108,7 @@ def report_director_progress(
         "timeline_segment_total": timeline_total,
         "partial_run": partial_run,
         "phase": phase,
-        "phase_label": PHASE_LABELS.get(phase, phase),
+        "phase_label": phase_label,
         "phase_value": phase_value,
         "phase_max": phase_max,
         "overall_value": overall_value,

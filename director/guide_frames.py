@@ -83,12 +83,22 @@ def resolve_guide_positions(guides, *, visible_frames: int, prefix_frames: int =
     return resolved
 
 
-def apply_guide_frames(positive, latent, *, vae, guides, visible_frames: int, prefix_frames: int = 0):
+def encode_guide_images(vae, guides, *, width: int, height: int):
+    from ..lib.image_prep import fit_canvas
+
+    if vae is None:
+        raise ValueError("Timed guide images require a video VAE.")
+    return {
+        id(guide): vae.encode(fit_canvas(guide.image, width, height, upscale_mode="lanczos"))
+        for guide in guides
+    }
+
+
+def apply_guide_frames(positive, latent, *, vae, guides, visible_frames: int, prefix_frames: int = 0, encoded_guides=None):
     if not guides:
         return positive
 
     import node_helpers
-    from ..lib.image_prep import fit_canvas
     from .h3_context_patches import CTX_FRAME_KEY, ensure_layout_patch, ensure_payload_patch
     from .h3_motion_context import _existing_keyframes, pixel_frames_for_latent_t, video_from_latent
 
@@ -99,17 +109,17 @@ def apply_guide_frames(positive, latent, *, vae, guides, visible_frames: int, pr
     ensure_payload_patch()
     video = video_from_latent(latent)
     width, height = int(video.shape[4]) * 16, int(video.shape[3]) * 16
+    encoded = encode_guide_images(vae, positions.values(), width=width, height=height) if encoded_guides is None else encoded_guides
     keyframes = {}
     for original in _existing_keyframes(positive):
         frame = int(original.get(CTX_FRAME_KEY, original.get("resolved_frame_index", 0)))
         keyframes[frame] = {**original, CTX_FRAME_KEY: frame}
     for frame, guide in positions.items():
-        image = fit_canvas(guide.image, width, height, upscale_mode="lanczos")
         keyframes[frame] = {
             "resolved_frame_index": frame,
             CTX_FRAME_KEY: frame,
             GUIDE_FRAME_KEY: True,
-            "latent": vae.encode(image),
+            "latent": encoded[id(guide)],
         }
     return node_helpers.conditioning_set_values(positive, {
         "minimax_keyframes": list(keyframes.values()),

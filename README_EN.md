@@ -7,6 +7,19 @@ Repository: [AIMixer/ComfyUI_MiniMaxH3_Director](https://github.com/AIMixer/Comf
 
 ![MiniMaxH3Director workflow screenshot](docs/screenshot.png)
 
+## Staged Execution
+
+The output bar's **Execution** selector defaults to **Original per-segment flow**, preserving existing workflows. **Staged per segment** runs encode → unload → sample → unload → decode for each segment, including a single-shot run. **Staged across all segments** encodes all selected segments first, unloads the encoders, samples all selected segments in order, unloads the sampling model, then decodes them all.
+
+Both staged modes force ComfyUI model unloading and CUDA cache cleanup at stage boundaries and after decoding, regardless of the between-segment cleanup setting. Models are loaded on demand within a stage. Weights typically remain in system RAM; unloading is not model deletion or a forced disk reload. Upstream Loader nodes still execute normally; resident models are unloaded before conditioning starts.
+
+- Batch staging keeps encoded conditions and pending AV latents on CPU. RAM use grows with segment count; use per-segment staging if memory is tight.
+- Model offload devices must be CPU. GPU offload settings such as `--highvram` / `--gpu-only` are rejected explicitly so stage cleanup cannot silently keep weights in VRAM.
+- Supports ordinary sampling, SelfLift with `rho=0`, timed guide images, and guide / guide+redraw continuity. Batch continuity uses original AV latents without intermediate decoding; seam-tail trims are applied during the final decode stage.
+- Partial batch reruns require a same-canvas raw AV latent for the previous referenced segment. Missing or incompatible caches fail explicitly rather than loading the VAE during sampling. Select adjacent segments together or use per-segment staging.
+- Refine / FaceRefine and SelfLift pixel anchoring (`rho>0`) are rejected before execution because they interleave sampling and decoding. Live audio preview is disabled in staged modes; TAE video previews remain available.
+- Compatible with **Defer VAE decode**: raw latents are saved after sampling, and the last stage produces TAE previews only. Already-saved latents survive interrupted runs and remain available to the standalone decoder.
+
 ## Deferred VAE Decode
 
 Enable **Defer VAE decode** in the Director output bar to save original AV latents after each sampled segment, followed by a silent TAEH3 preview. Requires `models/vae_approx/taeh3.safetensors` and ffmpeg. Supports both flat 2D and native temporal TAE weights. Flat weights decode every latent step and hold each image for its H3 `1/4/4/4/4` temporal span to match preview duration; this does not reproduce full-VAE per-frame motion. The folder defaults to `output/minimax_latents/<timestamp>/`; relative paths are based on `output/`, and absolute paths are supported. Each run has its own folder containing `manifest.json`, per-segment AV safetensors and `_tae.mp4` previews. Source-audio mode also persists the original audio.

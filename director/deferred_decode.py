@@ -250,6 +250,12 @@ class DeferredDecodeRun:
         record["preview"] = name
         self._publish()
 
+    def update_export_length(self, index: int, frame_count: int):
+        record = next((item for item in self.manifest["segments"] if item["index"] == index), None)
+        if record is not None:
+            record["export_frames"] = int(frame_count)
+            self._publish()
+
     def trim_previous(self, index: int, frames):
         record = next((item for item in self.manifest["segments"] if item["index"] == index), None)
         if record is not None:

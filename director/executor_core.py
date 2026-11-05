@@ -97,6 +97,7 @@ from .segment_continuity import (
     resolve_prev_segment_output,
 )
 from .vram_cleanup import cleanup_segment_vram
+from .staged_execution import advance_segment, cpu_handoff, execution_mode, validate_staged_execution
 
 log = logging.getLogger("ComfyUI-MiniMaxH3-Director.director.core")
 
@@ -452,6 +453,13 @@ def execute_director_plan_core(
     plan.sample_shift_audio = float(shift_audio)
     audio_mode = resolve_audio_mode(plan)
     decode_audio = audio_mode == AUDIO_MODE_GENERATE
+    mode = execution_mode(plan)
+    staged = mode != "standard"
+    batch_staged = mode == "staged_batch"
+    if staged:
+        validate_staged_execution(plan, model=model, vae=vae, audio_vae=audio_vae, clip=clip)
+        clear_vram_between_segments = False
+        cleanup_segment_vram(enabled=True, unload_models=True)
     from .deferred_decode import DeferredDecodeRun, deferred_decode_enabled
 
     deferred = DeferredDecodeRun(plan) if deferred_decode_enabled(plan) else None
@@ -465,7 +473,7 @@ def execute_director_plan_core(
         "liveAudioPreview", (plan.raw or {}).get("live_audio_preview", False)
     )
     live_audio_preview = raw_live_audio in (True, 1, "1", "true", "True", "on")
-    if deferred is not None:
+    if deferred is not None or staged:
         live_audio_preview = False
     try:
         audio_preview_every = int(
@@ -531,6 +539,12 @@ def execute_director_plan_core(
     segment_audios: list[dict[str, Any]] = []
     skipped_no_cache: list[int] = []
     reports: list[str] = [plan_summary(plan), "", "Execution path: ComfyUI official MiniMax H3"]
+    if staged:
+        reports.append(
+            "Execution: " + ("全分段分阶段" if batch_staged else "单分段分阶段")
+            + " — 编码 → 卸载模型 → 采样 → 卸载模型 → 解码；阶段缓存保留在 CPU 内存。"
+            "采样中音频预览已关闭；段间清理设置由阶段切换接管。"
+        )
     if first_pass_sigmas is not None:
         sigma_steps = max(0, len(first_pass_sigmas) - 1)
         sigma_label = "编辑框 SIGMAS" if plan.sample_sigmas_source == "editor" else "外接 SIGMAS"
@@ -684,10 +698,10 @@ def execute_director_plan_core(
     # replaces older IMAGE slots with 1-frame posters.
     segment_export_lengths: dict[int, int] = {}
     export_segments_mode = plan.export_mode == "segments"
+    staged_tail_trims: dict[int, int] = {}
+    staged_generators: dict[int, Any] = {}
 
-    def _run_one_segment(
-        seg, *, progress_index: int
-    ) -> tuple[torch.Tensor, dict[str, Any] | None, torch.Tensor, torch.Tensor]:
+    def _segment_steps(seg, *, progress_index: int, encoding_only: bool = False, encoded=None):
         nonlocal held_for_confirmation
         if seg.task_key not in SUPPORTED_TASK_KEYS:
             raise ValueError(
@@ -760,7 +774,13 @@ def execute_director_plan_core(
         prev_audio = None
         prev_end_frame = None
         prev_idx = seg.index - 1
-        if continuity_active:
+        if encoding_only and continuity_active:
+            if prev_idx not in run_indices:
+                prev_seg = all_segments[prev_idx] if prev_idx >= 0 else None
+                if prev_seg is not None:
+                    prev_first_pass_av = load_first_pass_av_latent(node_id, prev_seg, plan, allow_stale=True)
+                    prev_av = load_segment_av_latent(node_id, prev_seg, plan, allow_stale=True)
+        elif continuity_active:
             if prev_idx in passthrough_indices:
                 raise ValueError(
                     f"段间连贯：片段 #{seg.index + 1} 的前一段 #{prev_idx + 1} "
@@ -770,8 +790,9 @@ def execute_director_plan_core(
             prev_seg = all_segments[prev_idx] if prev_idx >= 0 else None
             prev_from_this_run = prev_idx in resampled_this_run
             try:
-                prev_tail = resolve_prev_segment_output(
-                    plan, all_segments, seg.index, completed_outputs, node_id
+                prev_tail = (
+                    None if batch_staged and prev_idx in run_indices else
+                    resolve_prev_segment_output(plan, all_segments, seg.index, completed_outputs, node_id)
                 )
             except ValueError as exc:
                 # No frame cache for prev (partial re-run, never rendered):
@@ -818,7 +839,7 @@ def execute_director_plan_core(
                 if prev_handoff is not None:
                     completed_av_handoff[prev_idx] = prev_handoff
             prev_audio = completed_audios.get(prev_idx)
-            if prev_audio is None and prev_seg is not None:
+            if prev_audio is None and prev_seg is not None and not (batch_staged and prev_idx in run_indices):
                 prev_audio = load_segment_audio(
                     node_id, prev_seg, plan, allow_stale=True
                 )
@@ -921,12 +942,26 @@ def execute_director_plan_core(
         # fl2v keeps last_frame when continuity is on; first_frame yields to context head.
         # r2v/v2v/rv2v: always eligible for MC when continuity_active (refs stay).
         i2v_new_anchor = seg.task_key == "i2v" and first_frame is not None
-        if deferred is not None and continuity_active and not i2v_new_anchor and prev_av is None:
+        if batch_staged and continuity_active and not i2v_new_anchor:
+            from .h3_motion_context import av_pixel_size
+
+            if av_pixel_size(prev_av) != (ctx_w, ctx_h) and av_pixel_size(prev_first_pass_av) == (ctx_w, ctx_h):
+                prev_av = prev_first_pass_av
+        if deferred is not None and not encoding_only and continuity_active and not i2v_new_anchor and prev_av is None:
             deferred.validate_context({}, None)
+        if batch_staged and continuity_active and not i2v_new_anchor:
+            from .h3_motion_context import av_pixel_size
+
+            pending_predecessor = encoding_only and prev_idx in run_indices
+            if not pending_predecessor and av_pixel_size(prev_av) != (ctx_w, ctx_h):
+                raise ValueError(
+                    f"全分段分阶段：分段 #{seg.index + 1} 的段间引导需要上一段同分辨率的原始 AV latent。"
+                    "请一起选中相邻分段、先生成上一段缓存，或切回单分段分阶段 / 原逐段流程。"
+                )
         use_motion_context = (
             continuity_active
             and not i2v_new_anchor
-            and (prev_av is not None or prev_tail is not None)
+            and (prev_av is not None or prev_tail is not None or (encoding_only and prev_idx in run_indices))
         )
         if skip_first_sample:
             # Cached first-pass latent already has its original pin; don't rebuild MC.
@@ -945,30 +980,50 @@ def execute_director_plan_core(
 
         # Always build via official MiniMaxH3ImageToVideo / ReferenceToVideo.
         t_cond = time.perf_counter()
-        positive, negative, latent, task_hint = run_minimax_conditioning(
-            clip=clip,
-            vae=vae,
-            audio_vae=audio_vae,
-            prompt=positive_prompt,
-            width=ctx_w,
-            height=ctx_h,
-            length=sample_len,
-            task_key=seg.task_key,
-            first_frame=first_frame,
-            last_frame=last_frame,
-            ref_images=ref_images,
-            ref_videos=ref_videos,
-            ref_video_audios=ref_video_audios,
-            ref_audios=ref_audios,
-            ref_image_size=official_ref_image_size(resolve_ref_image_size(seg, plan)),
-        )
-        cond_s = time.perf_counter() - t_cond
+        if encoded is None:
+            positive, negative, latent, task_hint = run_minimax_conditioning(
+                clip=clip,
+                vae=vae,
+                audio_vae=audio_vae,
+                prompt=positive_prompt,
+                width=ctx_w,
+                height=ctx_h,
+                length=sample_len,
+                task_key=seg.task_key,
+                first_frame=first_frame,
+                last_frame=last_frame,
+                ref_images=ref_images,
+                ref_videos=ref_videos,
+                ref_video_audios=ref_video_audios,
+                ref_audios=ref_audios,
+                ref_image_size=official_ref_image_size(resolve_ref_image_size(seg, plan)),
+            )
+            cond_s = time.perf_counter() - t_cond
+            from .semantic_bridge import apply_semantic_bridge
 
-        from .semantic_bridge import apply_semantic_bridge
+            positive, sb_note = apply_semantic_bridge(positive, plan, task_key=seg.task_key)
+            if sb_note:
+                log.info("MiniMax H3 Director: %s", sb_note)
+        else:
+            if encoded["sample_len"] != sample_len:
+                raise ValueError("全分段分阶段的上下文长度发生变化，请重新运行相邻分段。")
+            positive, negative, latent = encoded["positive"], encoded["negative"], encoded["latent"]
+            task_hint, cond_s = encoded["task_hint"], encoded["cond_s"]
 
-        positive, sb_note = apply_semantic_bridge(positive, plan, task_key=seg.task_key)
-        if sb_note:
-            log.info("MiniMax H3 Director: %s", sb_note)
+        if encoding_only:
+            from .guide_frames import encode_guide_images
+
+            guides = getattr(seg, "guide_frames", None) or []
+            guide_latents = encode_guide_images(vae, guides, width=ctx_w, height=ctx_h) if guides else {}
+            report_director_progress(
+                node_id, segment_index=progress_index, segment_total=seg_total,
+                phase="context_encode", phase_value=1, phase_max=1, **meta,
+            )
+            return cpu_handoff({
+                "positive": positive, "negative": negative, "latent": latent,
+                "task_hint": task_hint, "cond_s": cond_s, "sample_len": sample_len,
+                "guide_latents": guide_latents,
+            })
 
         trim_frames = 0
         after_shift = None
@@ -1024,6 +1079,17 @@ def execute_director_plan_core(
             # Phase-align can pin a few frames before the previous export end.
             # Drop that orphaned tail so concat does not replay it at the seam.
             trimmed_prev_export = 0
+            if batch_staged and prev_export_trim > 0 and prev_idx in run_indices:
+                previous_length = int(completed_av_handoff[prev_idx]["export_frames"])
+                new_length = previous_length - int(prev_export_trim)
+                if new_length < 1:
+                    raise ValueError("段间引导裁剪会清空上一段，无法继续分阶段执行。")
+                staged_tail_trims[prev_idx] = staged_tail_trims.get(prev_idx, 0) + int(prev_export_trim)
+                completed_av_handoff[prev_idx]["export_frames"] = new_length
+                if deferred is not None:
+                    deferred.update_export_length(prev_idx, new_length)
+                trimmed_prev_export = int(prev_export_trim)
+                prev_export_trim = 0
             if prev_export_trim > 0:
                 fps = float(plan.frame_rate or 24)
                 prev_chunk = completed_outputs.get(prev_idx)
@@ -1245,6 +1311,7 @@ def execute_director_plan_core(
             positive = apply_guide_frames(
                 positive, guide_latent, vae=vae, guides=seg.guide_frames,
                 visible_frames=guide_export_len, prefix_frames=guide_prefix,
+                encoded_guides=encoded["guide_latents"] if encoded is not None else None,
             )
             task_hint += f" + {len(seg.guide_frames)} timed guide(s)"
 
@@ -1252,6 +1319,13 @@ def execute_director_plan_core(
             node_id, segment_index=progress_index, segment_total=seg_total,
             phase="context_encode", phase_value=1, phase_max=1, **meta,
         )
+
+        encoded = None
+        if staged and not batch_staged:
+            positive, negative, latent = cpu_handoff((positive, negative, latent))
+            if getattr(seg, "guide_frames", None):
+                guide_latent = None
+            yield "encoded"
 
         # Single / last segment: skip — official H3 also keeps models loaded.
         if clear_vram_between_segments and seg_total > 1:
@@ -1441,14 +1515,39 @@ def execute_director_plan_core(
                 shift_cache=shift_cache,
             )
 
+        deferred_record = None
+        if staged:
+            samples = cpu_handoff(samples)
+            completed_av_latents[seg.index] = samples
+            if seg.index in completed_low_carry:
+                low_carry = cpu_handoff(completed_low_carry[seg.index])
+                completed_low_carry[seg.index] = low_carry
+            staged_export_len = continuity_export_len(
+                trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
+                target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
+            )
+            completed_av_handoff[seg.index] = {
+                "trim_frames": int(trim_frames), "export_frames": int(staged_export_len),
+                "sample_frames": int(sample_len), "official_mc_length": False,
+            }
+            if deferred is not None:
+                deferred_record = deferred.save_sample(
+                    seg, samples, trim_frames=trim_frames,
+                    export_frames=staged_export_len, sample_frames=sample_len,
+                )
+            positive = negative = latent = None
+            sample_s = time.perf_counter() - t_sample
+
         first_pass_samples = samples
         completed_first_pass_av[seg.index] = first_pass_samples
+        if staged:
+            yield "sampled"
         if deferred is not None:
             export_len = continuity_export_len(
                 trim_frames=trim_frames, sample_len=sample_len, visible_frames=num_frames,
                 target_len=target_len, keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
             )
-            record = deferred.save_sample(
+            record = deferred_record if deferred_record is not None else deferred.save_sample(
                 seg, samples, trim_frames=trim_frames,
                 export_frames=export_len, sample_frames=sample_len,
             )
@@ -1527,6 +1626,7 @@ def execute_director_plan_core(
             target_len=target_len,
             keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
         )
+        export_len -= staged_tail_trims.get(seg.index, 0)
         if (will_refine or continuity_active or run_face_refine or selflift_enabled(plan)) and not skip_first_sample:
             save_first_pass_cache(
                 node_id,
@@ -1626,7 +1726,8 @@ def execute_director_plan_core(
         if first_pass_gpu is not None:
             del first_pass_gpu
             first_pass_gpu = None
-        sample_s = time.perf_counter() - t_sample
+        if not staged:
+            sample_s = time.perf_counter() - t_sample
 
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
@@ -1645,6 +1746,7 @@ def execute_director_plan_core(
             target_len=target_len,
             keep_tail=bool(getattr(plan, "continuity_keep_tail", True)),
         )
+        export_len -= staged_tail_trims.get(seg.index, 0)
         decoded, audio_dict = _trim_decoded_to_export(
             decoded,
             audio_dict,
@@ -1860,13 +1962,71 @@ def execute_director_plan_core(
             f"Segment {ui_idx + 1} timing: "
             f"cond={cond_s:.1f}s sample={sample_s:.1f}s decode={decode_s:.1f}s "
             f"cache={'skipped' if not write_cache else f'{cache_s:.1f}s'} "
-            f"cleanup={'skipped' if progress_index >= seg_total - 1 else 'between-seg'}"
+            f"cleanup={'stage-boundaries' if staged else 'skipped' if progress_index >= seg_total - 1 else 'between-seg'}"
         )
         log.info(
             "MiniMax H3 Director segment %d/%d done (%d frames, task=%s)",
             ui_idx + 1, timeline_seg_total, target_len, seg.task_key,
         )
         return chunk, audio_dict, pre_chunk, pre_face_chunk
+
+    def _close_staged_generators():
+        for generator in staged_generators.values():
+            generator.close()
+        staged_generators.clear()
+
+    def _run_one_segment(seg, *, progress_index: int):
+        generator = staged_generators.pop(seg.index) if batch_staged else _segment_steps(
+            seg, progress_index=progress_index,
+        )
+        try:
+            if staged and not batch_staged:
+                advance_segment(generator, stage=(mode, 0), expected="encoded")
+                cleanup_segment_vram(enabled=True, unload_models=True)
+                advance_segment(generator, stage=(mode, 1), expected="sampled")
+                cleanup_segment_vram(enabled=True, unload_models=True)
+            return advance_segment(generator, stage=(mode, 2) if staged else None)
+        except BaseException:
+            if staged:
+                _close_staged_generators()
+                if batch_staged:
+                    cleanup_segment_vram(enabled=True, unload_models=True)
+            raise
+        finally:
+            generator.close()
+            if staged and not batch_staged:
+                cleanup_segment_vram(enabled=True, unload_models=True)
+
+    if batch_staged:
+        prepared_segments = {}
+        try:
+            for seg in all_segments:
+                if seg.index not in run_indices:
+                    continue
+                import comfy.model_management
+
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                prepared_segments[seg.index] = advance_segment(
+                    _segment_steps(seg, progress_index=progress_pos[seg.index], encoding_only=True),
+                    stage=(mode, 0),
+                )
+            cleanup_segment_vram(enabled=True, unload_models=True)
+            for seg in all_segments:
+                if seg.index not in run_indices:
+                    continue
+                comfy.model_management.throw_exception_if_processing_interrupted()
+                generator = _segment_steps(
+                    seg, progress_index=progress_pos[seg.index], encoded=prepared_segments.pop(seg.index),
+                )
+                staged_generators[seg.index] = generator
+                advance_segment(generator, stage=(mode, 1), expected="sampled")
+                resampled_this_run.add(seg.index)
+        except BaseException:
+            _close_staged_generators()
+            raise
+        finally:
+            prepared_segments.clear()
+            cleanup_segment_vram(enabled=True, unload_models=True)
 
     for seg in all_segments:
         # AV latent and decoded refine-pass clips are a rolling continuity
@@ -2144,8 +2304,8 @@ def execute_director_plan_core(
             pre_face_combined = None
             segment_pre_face = []
     shift_cache.clear()
-    if clear_vram_between_segments:
-        cleanup_segment_vram(enabled=True, unload_models=False)
+    if clear_vram_between_segments or staged:
+        cleanup_segment_vram(enabled=True, unload_models=staged)
     return (
         combined,
         segment_outputs,
