@@ -277,6 +277,7 @@ function normalizeOutputContinuity(output = {}) {
         fl2vPromptReinforcement: isFl2vPromptReinforcementEnabled(output),
         deferVaeDecode: [true, 1, "1", "true", "True", "on"].includes(output.deferVaeDecode ?? output.defer_vae_decode),
         saveSampledLatents: [true, 1, "1", "true", "True", "on"].includes(output.saveSampledLatents ?? output.save_sampled_latents),
+        explicitReferenceOnly: [true, 1, "1", "true", "True", "on"].includes(output.explicitReferenceOnly ?? output.explicit_reference_only ?? true),
         executionMode: ["staged_segment", "staged_batch"].includes(output.executionMode ?? output.execution_mode)
             ? (output.executionMode ?? output.execution_mode) : "standard",
         latentOutputDir: String(output.latentOutputDir ?? output.latent_output_dir ?? "").trim(),
@@ -2174,6 +2175,7 @@ function parseTimeline(raw, totalFrames, fps) {
             fl2vPromptReinforcement: data.output?.fl2vPromptReinforcement ?? data.output?.fl2v_prompt_reinforcement,
             deferVaeDecode: data.output?.deferVaeDecode ?? data.output?.defer_vae_decode,
             saveSampledLatents: data.output?.saveSampledLatents ?? data.output?.save_sampled_latents,
+            explicitReferenceOnly: data.output?.explicitReferenceOnly ?? data.output?.explicit_reference_only,
             executionMode: data.output?.executionMode ?? data.output?.execution_mode,
             latentOutputDir: data.output?.latentOutputDir ?? data.output?.latent_output_dir,
         });
@@ -3185,6 +3187,10 @@ class MiniMaxH3DirectorEditor {
                 <input type="checkbox" data-r="out-save-sampled-latents">
                 <span data-i18n="output.saveSampledLatents">采样完成立即保存 latent</span>
             </label>
+            <label data-i18n-title="tooltip.explicitReferenceOnly">
+                <input type="checkbox" data-r="out-explicit-reference-only">
+                <span data-i18n="output.explicitReferenceOnly">仅传入已引用参考素材</span>
+            </label>
             <label data-i18n-title="tooltip.deferVaeDecode">
                 <input type="checkbox" data-r="out-defer-vae-decode">
                 <span data-i18n="output.deferVaeDecode">延后 VAE 解码</span>
@@ -3576,6 +3582,7 @@ class MiniMaxH3DirectorEditor {
         this.fl2vPromptReinforcementCb = this.root.querySelector('[data-r="out-fl2v-prompt-reinforcement"]');
         this.deferVaeDecodeCb = this.root.querySelector('[data-r="out-defer-vae-decode"]');
         this.saveSampledLatentsCb = this.root.querySelector('[data-r="out-save-sampled-latents"]');
+        this.explicitReferenceOnlyCb = this.root.querySelector('[data-r="out-explicit-reference-only"]');
         this.executionModeSelect = this.root.querySelector('[data-r="out-execution-mode"]');
         this.latentOutputDirInput = this.root.querySelector('[data-r="out-latent-dir"]');
         this.segmentContinuityWrap = this.root.querySelector('[data-r="segment-continuity-wrap"]');
@@ -3913,6 +3920,9 @@ class MiniMaxH3DirectorEditor {
         }
         if (this.saveSampledLatentsCb) {
             this.saveSampledLatentsCb.onchange = () => this.onOutputField("saveSampledLatents", this.saveSampledLatentsCb.checked);
+        }
+        if (this.explicitReferenceOnlyCb) {
+            this.explicitReferenceOnlyCb.onchange = () => this.onOutputField("explicitReferenceOnly", this.explicitReferenceOnlyCb.checked);
         }
         if (this.executionModeSelect) {
             this.executionModeSelect.onchange = () => this.onOutputField("executionMode", this.executionModeSelect.value);
@@ -6645,6 +6655,7 @@ class MiniMaxH3DirectorEditor {
         if (this.fl2vPromptReinforcementCb) this.fl2vPromptReinforcementCb.checked = isFl2vPromptReinforcementEnabled(out);
         if (this.deferVaeDecodeCb) this.deferVaeDecodeCb.checked = !!out.deferVaeDecode;
         if (this.saveSampledLatentsCb) this.saveSampledLatentsCb.checked = !!out.saveSampledLatents;
+        if (this.explicitReferenceOnlyCb) this.explicitReferenceOnlyCb.checked = !!out.explicitReferenceOnly;
         if (this.executionModeSelect) this.executionModeSelect.value = out.executionMode || "standard";
         if (this.latentOutputDirInput) {
             this.latentOutputDirInput.value = String(out.latentOutputDir || "");
@@ -7075,6 +7086,8 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.deferVaeDecode = !!value;
         } else if (key === "saveSampledLatents") {
             this.timeline.output.saveSampledLatents = !!value;
+        } else if (key === "explicitReferenceOnly") {
+            this.timeline.output.explicitReferenceOnly = !!value;
         } else if (key === "executionMode") {
             this.timeline.output.executionMode = ["staged_segment", "staged_batch"].includes(value) ? value : "standard";
         } else if (key === "latentOutputDir") {
@@ -7208,6 +7221,7 @@ class MiniMaxH3DirectorEditor {
             : isFl2vPromptReinforcementEnabled(this.timeline.output);
         if (this.deferVaeDecodeCb) this.timeline.output.deferVaeDecode = !!this.deferVaeDecodeCb.checked;
         if (this.saveSampledLatentsCb) this.timeline.output.saveSampledLatents = !!this.saveSampledLatentsCb.checked;
+        if (this.explicitReferenceOnlyCb) this.timeline.output.explicitReferenceOnly = !!this.explicitReferenceOnlyCb.checked;
         if (this.executionModeSelect) this.timeline.output.executionMode = this.executionModeSelect.value;
         if (this.latentOutputDirInput) this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {

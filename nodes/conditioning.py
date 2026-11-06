@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..lib.ref_images import MAX_REFERENCE_IMAGES, REF_IMAGE_KEY_PREFIX, flatten_reference_kwargs
+from ..lib.prompt_references import filter_prompt_references
 from ..lib.task_modes import TASK_DESCRIPTIONS, MiniMaxH3Task, infer_task
 
 
@@ -21,7 +22,7 @@ def _shared_optional_inputs() -> dict:
                 "IMAGE",
                 {
                     "tooltip": (
-                        f"Reference image for <Picture {index + 1}> in prompt (r2v). "
+                        f"Reference image <Picture {index + 1}> (r2v). Filtered when explicit_reference_only is enabled. "
                         "Native aspect; H3 ref_image_size applies at encode time."
                     ),
                 },
@@ -33,6 +34,13 @@ def _shared_optional_inputs() -> dict:
             {
                 "default": "match",
                 "tooltip": "Reference image sizing for MiniMaxH3ReferenceToVideo.",
+            },
+        ),
+        "explicit_reference_only": (
+            "BOOLEAN",
+            {
+                "default": True,
+                "tooltip": "Only encode references explicitly tagged in the prompt. Disable to pass all supplied references unchanged.",
             },
         ),
     }
@@ -122,6 +130,7 @@ def run_minimax_conditioning(
     ref_video_audios=None,
     ref_audios=None,
     ref_image_size: str = "match",
+    explicit_reference_only: bool = True,
     **kwargs,
 ):
     """Build positive conditioning + AV latent via official MiniMax H3 nodes."""
@@ -129,6 +138,12 @@ def run_minimax_conditioning(
 
     ref_images = ref_images or _reference_images_dict_from_kwargs(kwargs)
     ref_videos = _reference_videos_dict(ref_videos)
+
+    if explicit_reference_only and (task_key in {"r2v", "v2v", "rv2v"} or ref_images or ref_videos or ref_audios or ref_video_audios):
+        prompt, ref_images, ref_videos, ref_video_audios, ref_audios = filter_prompt_references(
+            prompt, ref_images=ref_images, ref_videos=ref_videos,
+            ref_video_audios=ref_video_audios, ref_audios=ref_audios,
+        )
 
     use_reference = (
         task_key in {"r2v", "v2v", "rv2v"}

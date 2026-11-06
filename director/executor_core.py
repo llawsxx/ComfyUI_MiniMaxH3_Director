@@ -10,6 +10,7 @@ from typing import Any
 import torch
 
 from ..lib.image_prep import assert_minimax_canvas, fit_canvas, fit_video_long_edge, limit_ref_image_dict
+from ..lib.prompt_references import explicit_reference_only_enabled
 from ..lib.task_modes import SUPPORTED_TASK_KEYS
 from ..nodes.conditioning import run_minimax_conditioning
 from .core_sampling import ShiftedModelCache, sample_single_stage
@@ -908,23 +909,18 @@ def execute_director_plan_core(
                 has_start_frame=has_start,
                 enabled=is_fl2v_prompt_reinforcement_enabled(plan.raw),
             )
-        elif seg.task_key == "r2v":
-            ref_idxs = [int(getattr(r, "index", 0)) for r in (seg.refs or []) if r is not None]
-            vid_idxs = [int(getattr(v, "index", 0)) for v in (getattr(seg, "ref_videos", None) or []) if v is not None]
+        elif seg.task_key == "r2v" and not explicit_reference_only_enabled(plan.raw):
+            ref_idxs = [int(getattr(ref, "index", 0)) for ref in (seg.refs or []) if ref is not None]
+            vid_idxs = [int(getattr(video, "index", 0)) for video in (getattr(seg, "ref_videos", None) or []) if video is not None]
             audio_idxs = usable_ref_audio_indices(
                 seg.ref_audios, cache=getattr(plan, "audio_decode_cache", None),
             )
             positive_prompt = drop_unusable_audio_prompt_tags(positive_prompt, audio_idxs)
             positive_prompt = reinforce_r2v_prompt(
-                positive_prompt,
-                ref_indices=ref_idxs,
-                video_indices=vid_idxs,
-                audio_indices=audio_idxs,
+                positive_prompt, ref_indices=ref_idxs, video_indices=vid_idxs, audio_indices=audio_idxs,
             )
-        elif seg.task_key == "v2v":
-            positive_prompt = reinforce_v2v_prompt(positive_prompt)
-        elif seg.task_key == "rv2v":
-            ref_idxs = [int(getattr(r, "index", 0)) for r in (seg.refs or []) if r is not None]
+        elif seg.task_key == "rv2v" and not explicit_reference_only_enabled(plan.raw):
+            ref_idxs = [int(getattr(ref, "index", 0)) for ref in (seg.refs or []) if ref is not None]
             audio_idxs = usable_ref_audio_indices(
                 seg.ref_audios, cache=getattr(plan, "audio_decode_cache", None),
             )
@@ -932,6 +928,8 @@ def execute_director_plan_core(
             positive_prompt = reinforce_rv2v_prompt(
                 positive_prompt, ref_indices=ref_idxs, audio_indices=audio_idxs,
             )
+        elif seg.task_key in {"v2v", "rv2v"}:
+            positive_prompt = reinforce_v2v_prompt(positive_prompt)
 
         report_director_progress(
             node_id, segment_index=progress_index, segment_total=seg_total,
@@ -1003,6 +1001,7 @@ def execute_director_plan_core(
                 ref_video_audios=ref_video_audios,
                 ref_audios=ref_audios,
                 ref_image_size=official_ref_image_size(resolve_ref_image_size(seg, plan)),
+                explicit_reference_only=explicit_reference_only_enabled(plan.raw),
             )
             cond_s = time.perf_counter() - t_cond
             from .semantic_bridge import apply_semantic_bridge

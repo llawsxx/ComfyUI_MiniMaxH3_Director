@@ -47,6 +47,7 @@ def apply_segment_face_refine(
 ) -> tuple[torch.Tensor, str]:
     """Return (stitched frames [N,...], report). Caller keeps a copy of `frames` for compare."""
     from ...nodes.conditioning import run_minimax_conditioning
+    from ...lib.prompt_references import explicit_reference_only_enabled
     from ..core_sampling import sample_single_stage
     from ..plan import (
         official_ref_image_size,
@@ -106,6 +107,7 @@ def apply_segment_face_refine(
         ref_videos=None,
         ref_audios=ref_audios,
         ref_image_size=size_arg,
+        explicit_reference_only=explicit_reference_only_enabled(plan.raw),
     )
     latent = inject_video_latent(latent, crop_in, vae)
     sigma_t = None

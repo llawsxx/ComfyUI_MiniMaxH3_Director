@@ -609,6 +609,7 @@ def build_plan_from_external_groups(
     )
 
     timeline = _parse_timeline_meta(timeline_data)
+    from ..lib.prompt_references import explicit_reference_only_enabled
     from .guide_frames import load_guide_frames
     fps = float(timeline.get("frameRate") or frame_rate or 24.0)
     task_key = resolve_task_key(task_type)
@@ -797,14 +798,13 @@ def build_plan_from_external_groups(
                 SegmentRefAudio(index=int(idx), audio=aud, audio_file="")
                 for idx, aud in sorted((g.get("ref_video_audios") or {}).items())
             ]
-            audio_idxs = usable_ref_audio_indices(ref_audios)
-            prompt = drop_unusable_audio_prompt_tags(prompt, audio_idxs)
-            prompt = reinforce_r2v_prompt(
-                prompt,
-                ref_indices=[r.index for r in refs],
-                video_indices=[v.index for v in ref_videos],
-                audio_indices=audio_idxs,
-            )
+            if not explicit_reference_only_enabled(timeline):
+                audio_idxs = usable_ref_audio_indices(ref_audios)
+                prompt = drop_unusable_audio_prompt_tags(prompt, audio_idxs)
+                prompt = reinforce_r2v_prompt(
+                    prompt, ref_indices=[ref.index for ref in refs],
+                    video_indices=[video.index for video in ref_videos], audio_indices=audio_idxs,
+                )
             row = timeline_row_for_index(timeline, int(src_index))
             if not row and isinstance(g, dict):
                 row = g

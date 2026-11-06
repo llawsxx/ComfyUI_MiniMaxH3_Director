@@ -76,6 +76,17 @@ Reference-audio slots can select an existing video or a local audio/video file. 
 
 `Export source to source_images` populates only the separate `source_images` output; it does not change `images`. Connect `source_images` to a preview or video compositor. Decode failures are reported explicitly and emit a neutral placeholder instead of generated frames.
 
+## Explicit Reference Selection
+
+The output bar's **Only pass referenced media** switch is enabled by default and saved with the workflow. Turn it off to restore legacy behavior: pass all supplied references and let the Director add tags for missing media types, without the new filtering or internal renumbering. Standalone Conditioning nodes expose `explicit_reference_only`; disabling it passes all references unchanged.
+
+With the switch enabled, only reference assets explicitly tagged as `<Picture N>`, `<Video N>` or `<Audio N>` in the final prompt reach the multimodal encoder and reference conditioning. Unmentioned assets stay in the UI but receive no reference VAE encoding; missing tags are no longer automatically added. This applies to shared/group assets, externally wired groups and standalone Conditioning nodes. Shared and per-segment prompts are considered together.
+
+- UI slot numbers stay unchanged. Referencing only `<Picture 3>` selects image slot 3; the transmitted image and model-facing tag are both compacted to `<Picture 1>`. Images, videos and audio are remapped separately without editing the stored prompt. Repeated references encode once. Tags accept case and whitespace variations. Tags with no available asset are logged and removed rather than being bound to another slot.
+- Paired external-video soundtracks follow official audio numbering: paired tracks in video order precede standalone audio slots, retaining standalone slot offsets. A `<Video N>` tag alone does not include its soundtrack; reference the corresponding `<Audio J>` as well. Audio-only references pass the soundtrack as standalone audio without the video frames.
+- Endpoint keyframes, timed guides and inter-segment continuity are unaffected. The source clip in `v2v` / `rv2v` is the editing input, not an optional reference asset, and remains automatically bound as `<Video 1>`; extra images/audio still require explicit tags.
+- With this option enabled, older workflows that connected assets without mentioning them must add explicit tags, use the `@` picker, or disable the option to restore legacy behavior. The switch participates in sampling cache fingerprints so results from the opposite setting are not reused incorrectly.
+
 ## Prompt text import and shared fl2v keyframes
 
 In `fl2v` or video generation groups (such as `t2v` / `i2v` / `r2v`), click **Import prompts** in the toolbar. Paste text or choose a UTF-8 `.txt` / `.md` file. Import is unavailable while externally wired groups control the shots; edit those source nodes instead.
