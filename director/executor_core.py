@@ -32,6 +32,7 @@ from .audio_export import (
     AUDIO_MODE_GENERATE,
     AUDIO_MODE_MUTE,
     AUDIO_MODE_SOURCE,
+    AUDIO_MODE_DRIVE,
     empty_audio_dict,
     resolve_audio_mode,
 )
@@ -454,6 +455,12 @@ def execute_director_plan_core(
     plan.sample_shift_audio = float(shift_audio)
     audio_mode = resolve_audio_mode(plan)
     decode_audio = audio_mode == AUDIO_MODE_GENERATE
+    drive_session = None
+    if audio_mode == AUDIO_MODE_DRIVE:
+        from .audio_drive import AudioDriveSession
+
+        drive_session = AudioDriveSession(plan, audio_vae)
+        plan.audio_drive_session = drive_session
     mode = execution_mode(plan)
     staged = mode != "standard"
     batch_staged = mode == "staged_batch"
@@ -474,7 +481,7 @@ def execute_director_plan_core(
         "liveAudioPreview", (plan.raw or {}).get("live_audio_preview", False)
     )
     live_audio_preview = raw_live_audio in (True, 1, "1", "true", "True", "on")
-    if deferred is not None or staged:
+    if deferred is not None or staged or drive_session is not None:
         live_audio_preview = False
     try:
         audio_preview_every = int(
@@ -634,6 +641,8 @@ def execute_director_plan_core(
         reports.append("Audio: muted — skip audio VAE decode, silent AUDIO output.")
     elif audio_mode == AUDIO_MODE_SOURCE:
         reports.append("Audio: source — skip audio VAE decode, use original timeline audio.")
+    elif audio_mode == AUDIO_MODE_DRIVE:
+        reports.append("Audio: drive — lock target audio latent; denoise video only; export the selected soundtrack.")
     else:
         reports.append("Audio: generate — decode MiniMax H3 AV latent audio.")
     selected_ui = ext_meta.get("selected")
@@ -1015,6 +1024,9 @@ def execute_director_plan_core(
             positive, negative, latent = encoded["positive"], encoded["negative"], encoded["latent"]
             task_hint, cond_s = encoded["task_hint"], encoded["cond_s"]
 
+        if drive_session is not None:
+            drive_session.prepare(audio_vae)
+
         if encoding_only:
             from .guide_frames import encode_guide_images
 
@@ -1036,7 +1048,7 @@ def execute_director_plan_core(
             # Pin audio from previous AV latent whenever available.
             # Do not gate on decode_audio — mute only skips final audio decode.
             pin_audio = (
-                audio_mode != AUDIO_MODE_MUTE
+                audio_mode not in {AUDIO_MODE_MUTE, AUDIO_MODE_DRIVE}
                 and (prev_av is not None or prev_audio is not None)
             )
             prev_av = select_continuity_pin_latent(latent, prev_first_pass_av, prev_av)
@@ -1327,6 +1339,15 @@ def execute_director_plan_core(
             phase="context_encode", phase_value=1, phase_max=1, **meta,
         )
 
+        if drive_session is not None:
+            previous_handoff = completed_av_handoff.get(prev_idx) or {}
+            previous_length = segment_export_lengths.get(prev_idx, previous_handoff.get("export_frames"))
+            drive_start = drive_session.start_segment(
+                seg, previous_length, previous_handoff.get("drive_start_frame"),
+            )
+            latent = drive_session.lock(latent, start_frame=drive_start, trim_frames=trim_frames)
+            task_hint += " + audio-driven"
+
         encoded = None
         if staged and not batch_staged:
             positive, negative, latent = cpu_handoff((positive, negative, latent))
@@ -1537,6 +1558,8 @@ def execute_director_plan_core(
                 "trim_frames": int(trim_frames), "export_frames": int(staged_export_len),
                 "sample_frames": int(sample_len), "official_mc_length": False,
             }
+            if drive_session is not None:
+                completed_av_handoff[seg.index]["drive_start_frame"] = drive_session.starts[seg.index]
             positive = negative = latent = None
             sample_s = time.perf_counter() - t_sample
 
@@ -1567,6 +1590,8 @@ def execute_director_plan_core(
                 "trim_frames": int(trim_frames), "export_frames": int(chunk.shape[0]),
                 "sample_frames": int(sample_len), "official_mc_length": False,
             }
+            if drive_session is not None:
+                completed_av_handoff[seg.index]["drive_start_frame"] = drive_session.starts[seg.index]
             completed_outputs[seg.index] = chunk
             completed_pre_refine[seg.index] = chunk
             completed_pre_face[seg.index] = chunk
@@ -1645,6 +1670,7 @@ def execute_director_plan_core(
                     "export_frames": int(export_len),
                     "sample_frames": int(sample_len),
                     "official_mc_length": False,
+                    "drive_start_frame": drive_session.starts[seg.index] if drive_session is not None else None,
                 },
             )
         pass_clips: list[tuple[str, torch.Tensor]] = []
@@ -1889,6 +1915,9 @@ def execute_director_plan_core(
             # False ⇒ next pin must use context_end_frame = trim+export.
             "official_mc_length": False,
         }
+        if drive_session is not None:
+            handoff["drive_start_frame"] = drive_session.starts[seg.index]
+            audio_dict = drive_session.export_audio(seg, int(chunk.shape[0]))
         completed_av_latents[seg.index] = samples
         completed_av_handoff[seg.index] = handoff
         if isinstance(audio_dict, dict) and audio_dict.get("waveform") is not None:

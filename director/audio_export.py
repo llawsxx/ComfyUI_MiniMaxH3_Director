@@ -24,6 +24,7 @@ SILENT_SAMPLE_RATE = 44100
 AUDIO_MODE_GENERATE = "generate"
 AUDIO_MODE_SOURCE = "source"
 AUDIO_MODE_MUTE = "mute"
+AUDIO_MODE_DRIVE = "drive"
 VIDEO_EDIT_AUDIO_TASKS = frozenset({"v2v", "rv2v", "r2v"})
 
 
@@ -42,11 +43,11 @@ def task_passes_source_audio(task_key: str) -> bool:
 
 
 def resolve_audio_mode(plan) -> str:
-    """Return generate | source | mute from timeline.output.audioMode.
+    """Return generate | source | mute | drive from timeline.output.audioMode.
 
     ``source`` is honored for v2v/rv2v (source-video extract) and r2v
-    (per-segment reference audio). Other tasks (including mixed) treat it
-    as generate.
+    (per-segment reference audio). Other tasks (including mixed) treat source
+    as generate. Independent audio drive is available to every task.
     """
     out = (getattr(plan, "raw", None) or {}).get("output") or {}
     raw = str(out.get("audioMode") or out.get("audio_mode") or AUDIO_MODE_GENERATE).strip().lower()
@@ -60,6 +61,8 @@ def resolve_audio_mode(plan) -> str:
         "mute": AUDIO_MODE_MUTE,
         "silent": AUDIO_MODE_MUTE,
         "silence": AUDIO_MODE_MUTE,
+        "drive": AUDIO_MODE_DRIVE,
+        "audio_drive": AUDIO_MODE_DRIVE,
     }
     mode = aliases.get(raw, AUDIO_MODE_GENERATE)
     task_key = str(getattr(plan, "global_task_key", "") or "")
@@ -137,6 +140,11 @@ def prepare_segment_audio_for_file_export(
     (source extract fallback when the task allows); source extracts timeline audio.
     """
     mode = resolve_audio_mode(plan)
+    if mode == AUDIO_MODE_DRIVE:
+        session = getattr(plan, "audio_drive_session", None)
+        if session is None:
+            raise ValueError("音频驱动会话不可用，不能导出驱动音频。")
+        return session.export_audio(seg, frame_count)
     if mode == AUDIO_MODE_MUTE:
         return None
 
@@ -382,8 +390,18 @@ def build_director_audio_outputs(
     if mode == AUDIO_MODE_MUTE:
         return [empty_audio_dict(SILENT_SAMPLE_RATE) for _ in images_out], None
 
-    # Prefer model audio only in generate mode.
-    if mode == AUDIO_MODE_GENERATE and segment_audios:
+    if mode == AUDIO_MODE_DRIVE and not segment_audios:
+        session = getattr(plan, "audio_drive_session", None)
+        if session is None:
+            raise ValueError("音频驱动会话不可用，不能导出驱动音频。")
+        segments = list(plan.segments)
+        if export_segments:
+            audio = [session.export_audio(seg, int(images.shape[0])) for seg, images in zip(segments, images_out)]
+            return audio, None
+        segment_audios = [session.export_audio(seg, int(seg.frame_count)) for seg in segments]
+        segment_frame_counts = [int(seg.frame_count) for seg in segments]
+
+    if mode in {AUDIO_MODE_GENERATE, AUDIO_MODE_DRIVE} and segment_audios:
         # 「全部导出」合并画面时 images_out 只有 1 条，必须把各组音频按时间轴拼接，
         # 否则只会用第 1 组音频并静音填充后半段（第二组及之后无声）。
         # Also merge when a single clip is present but we still have a full
@@ -538,6 +556,8 @@ def source_audio_report_note(
     source_fallback: str | None = None,
 ) -> str:
     mode = audio_mode or resolve_audio_mode(plan)
+    if mode == AUDIO_MODE_DRIVE:
+        return "\n\nAudio: driven — target audio locked during sampling; output uses the selected original soundtrack."
     if mode == AUDIO_MODE_MUTE:
         return "\n\nAudio: muted (silent output)."
     if mode == AUDIO_MODE_SOURCE:

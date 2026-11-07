@@ -547,6 +547,9 @@ def build_export_pack(timeline: dict, widgets: dict | None = None, *, dry_run: b
         global_block = {}
         data["global"] = global_block
     shared_folder = "shared_params"
+    drive_audio = (data.get("output") or {}).get("driveAudio")
+    if isinstance(drive_audio, dict) and drive_audio:
+        _rewrite_audio_list([drive_audio], "shared_params/drive_audio", staging or Path("."), missing, dry_run, sizes)
     _rewrite_image_list(global_block.get("refs") or [], shared_folder, staging or Path("."), missing, dry_run, sizes)
     _rewrite_audio_list(global_block.get("refAudios") or global_block.get("ref_audios") or [], shared_folder, staging or Path("."), missing, dry_run, sizes)
     _rewrite_video_list(global_block.get("refVideos") or global_block.get("ref_videos") or [], shared_folder, staging or Path("."), missing, dry_run, sizes)

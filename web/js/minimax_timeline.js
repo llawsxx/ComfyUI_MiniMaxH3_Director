@@ -207,6 +207,7 @@ function normalizeAudioMode(value) {
     const raw = String(value || "generate").trim().toLowerCase();
     if (raw === "source" || raw === "original" || raw === "passthrough") return "source";
     if (raw === "mute" || raw === "silent" || raw === "silence") return "mute";
+    if (raw === "drive" || raw === "audio_drive") return "drive";
     return "generate";
 }
 
@@ -282,6 +283,8 @@ function normalizeOutputContinuity(output = {}) {
             ? (output.executionMode ?? output.execution_mode) : "standard",
         latentOutputDir: String(output.latentOutputDir ?? output.latent_output_dir ?? "").trim(),
         audioMode: normalizeAudioMode(output.audioMode ?? output.audio_mode),
+        driveAudio: sanitizeRefAudio(output.driveAudio ?? output.drive_audio ?? {}),
+        driveAudioOffsetSec: Math.max(0, Number(output.driveAudioOffsetSec ?? output.drive_audio_offset_sec) || 0),
         refImageSize: normalizeRefImageSize(output.refImageSize ?? output.ref_image_size),
     };
 }
@@ -2161,6 +2164,8 @@ function parseTimeline(raw, totalFrames, fps) {
             maxExportFrames: data.output?.maxExportFrames ?? data.output?.max_export_frames ?? 0,
             exportMode: data.output?.exportMode ?? data.output?.export_mode ?? "all",
             audioMode: normalizeAudioMode(data.output?.audioMode ?? data.output?.audio_mode),
+            driveAudio: data.output?.driveAudio ?? data.output?.drive_audio,
+            driveAudioOffsetSec: data.output?.driveAudioOffsetSec ?? data.output?.drive_audio_offset_sec,
             exportSourceImages: data.output?.exportSourceImages === true
                 || data.output?.export_source_images === true,
             exportPreFaceRefine: data.output?.exportPreFaceRefine === true
@@ -3152,7 +3157,16 @@ class MiniMaxH3DirectorEditor {
                     <option value="generate" data-i18n="output.audio.generate">生成声音</option>
                     <option value="source" data-i18n="output.audio.source">使用原声</option>
                     <option value="mute" data-i18n="output.audio.mute">静音</option>
+                    <option value="drive" data-i18n="output.audio.drive">音频驱动</option>
                 </select>
+            </span>
+            <span class="hidden" data-r="out-drive-audio-wrap" data-i18n-title="tooltip.audioDrive" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:100%">
+                <button class="bd-btn" data-r="out-drive-audio-pick" data-i18n="output.audio.drivePick">选择驱动音频</button>
+                <span class="bd-meta" data-r="out-drive-audio-name" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+                <button class="bd-btn" data-r="out-drive-audio-clear" data-i18n="output.audio.driveClear">移除</button>
+                <label data-i18n="output.audio.driveOffset">音频起点（秒）</label>
+                <input type="number" class="bd-num" data-r="out-drive-audio-offset" min="0" step="0.1" value="0" style="width:72px">
+                <audio data-r="out-drive-audio-preview" controls preload="none" style="height:30px;max-width:220px"></audio>
             </span>
             <span class="bd-out-source-wrap hidden" data-r="out-source-wrap" data-i18n-title="widget.tooltip.exportSourceImages">
                 <label>
@@ -3573,6 +3587,12 @@ class MiniMaxH3DirectorEditor {
         this.fpsInput = this.root.querySelector('[data-r="timeline-fps"]');
         this.outAudioWrap = this.root.querySelector('[data-r="out-audio-wrap"]');
         this.outAudioMode = this.root.querySelector('[data-r="out-audio-mode"]');
+        this.driveAudioWrap = this.root.querySelector('[data-r="out-drive-audio-wrap"]');
+        this.driveAudioPick = this.root.querySelector('[data-r="out-drive-audio-pick"]');
+        this.driveAudioClear = this.root.querySelector('[data-r="out-drive-audio-clear"]');
+        this.driveAudioName = this.root.querySelector('[data-r="out-drive-audio-name"]');
+        this.driveAudioOffset = this.root.querySelector('[data-r="out-drive-audio-offset"]');
+        this.driveAudioPreview = this.root.querySelector('[data-r="out-drive-audio-preview"]');
         this.exportSourceImagesWrap = this.root.querySelector('[data-r="out-source-wrap"]');
         this.exportSourceImagesCb = this.root.querySelector('[data-r="out-export-source"]');
         this.exportPreFaceRefineWrap = this.root.querySelector('[data-r="out-preface-wrap"]');
@@ -3938,6 +3958,26 @@ class MiniMaxH3DirectorEditor {
         }
         if (this.outAudioMode) {
             this.outAudioMode.onchange = () => this.onOutputField("audioMode", this.outAudioMode.value);
+        }
+        if (this.driveAudioPick) {
+            this.driveAudioPick.onclick = async () => {
+                try {
+                    const picked = await this.chooseAudioInput({ currentValue: this.timeline.output?.driveAudio?.audioFile || "" });
+                    if (!picked) return;
+                    this.onOutputField("driveAudio", {
+                        index: 0, audioFile: picked.relPath, fileName: picked.fileName,
+                        subfolder: picked.subfolder || "", type: picked.type || "input",
+                    });
+                } catch (error) {
+                    alert(t("upload.refAudioFailed", { err: error?.message || error }));
+                }
+            };
+        }
+        if (this.driveAudioClear) {
+            this.driveAudioClear.onclick = () => this.onOutputField("driveAudio", {});
+        }
+        if (this.driveAudioOffset) {
+            this.driveAudioOffset.onchange = () => this.onOutputField("driveAudioOffsetSec", this.driveAudioOffset.value);
         }
         if (this.exportSourceImagesCb) {
             this.exportSourceImagesCb.onchange = () => {
@@ -5441,8 +5481,9 @@ class MiniMaxH3DirectorEditor {
             this.outHint.classList.toggle("hidden", !showHint);
             this.outHint.textContent = showHint ? genLayoutHint(this.getTaskKey()) : "";
         }
-        const isVideoEditTask = isVideoEditTaskKey(taskKey) || taskKey === "r2v";
-        this.outAudioWrap?.classList.toggle("hidden", !isVideoEditTask);
+        this.outAudioWrap?.classList.toggle("hidden", !CONTINUITY_TASKS.has(taskKey));
+        const sourceOption = this.outAudioMode?.querySelector('option[value="source"]');
+        if (sourceOption) sourceOption.hidden = !isVideoEditTaskKey(taskKey) && taskKey !== "r2v";
         this.syncExportSourceImagesUI();
         if (this.outExportMode) {
             this.outExportMode.disabled = (isBatch || isFl2v) && !showBatchExport;
@@ -6669,6 +6710,22 @@ class MiniMaxH3DirectorEditor {
                 this.timeline.output = { ...out };
             }
         }
+        this.driveAudioWrap?.classList.toggle("hidden", out.audioMode !== "drive");
+        if (this.driveAudioName) {
+            this.driveAudioName.textContent = out.driveAudio?.fileName || out.driveAudio?.audioFile || t("output.audio.driveEmpty");
+        }
+        if (this.driveAudioOffset) this.driveAudioOffset.value = String(out.driveAudioOffsetSec || 0);
+        if (this.driveAudioClear) this.driveAudioClear.disabled = !out.driveAudio?.audioFile;
+        if (this.driveAudioPreview) {
+            const file = out.audioMode === "drive" ? out.driveAudio?.audioFile : "";
+            const url = file ? inputViewUrl(file, out.driveAudio?.type || "input") : "";
+            if (this.driveAudioPreview.getAttribute("src") !== (url || null)) {
+                this.driveAudioPreview.pause();
+                if (url) this.driveAudioPreview.src = url;
+                else this.driveAudioPreview.removeAttribute("src");
+            }
+            this.driveAudioPreview.classList.toggle("hidden", !file);
+        }
         if (this.segmentContinuityCb) this.segmentContinuityCb.checked = isContinuityEnabled(out);
         if (this.segmentContinuityOverlap) {
             this.segmentContinuityOverlap.value = String(
@@ -7068,6 +7125,11 @@ class MiniMaxH3DirectorEditor {
             this.timeline.output.exportMode = value === "segments" ? "segments" : "all";
         } else if (key === "audioMode") {
             this.timeline.output.audioMode = normalizeAudioMode(value);
+        } else if (key === "driveAudio") {
+            this.timeline.output.driveAudio = sanitizeRefAudio(value || {});
+        } else if (key === "driveAudioOffsetSec") {
+            const seconds = Number(value);
+            this.timeline.output.driveAudioOffsetSec = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
         } else if (key === "continuityEnabled") {
             this.timeline.output.continuityEnabled = !!value;
         } else if (key === "continuityOverlapFrames") {
@@ -7224,6 +7286,7 @@ class MiniMaxH3DirectorEditor {
         if (this.explicitReferenceOnlyCb) this.timeline.output.explicitReferenceOnly = !!this.explicitReferenceOnlyCb.checked;
         if (this.executionModeSelect) this.timeline.output.executionMode = this.executionModeSelect.value;
         if (this.latentOutputDirInput) this.timeline.output.latentOutputDir = this.latentOutputDirInput.value.trim();
+        if (this.driveAudioOffset) this.timeline.output.driveAudioOffsetSec = Math.max(0, Number(this.driveAudioOffset.value) || 0);
         if (isVideoEditTaskKey(this.getTaskKey()) && this.exportSourceImagesCb) {
             this.timeline.output.exportSourceImages = !!this.exportSourceImagesCb.checked;
         }

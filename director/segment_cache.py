@@ -19,6 +19,7 @@ import torch
 import folder_paths
 
 from ..lib.prompt_references import explicit_reference_only_enabled
+from .audio_drive import drive_audio_identity
 from .h3_latent_continue import CONTINUE_PIPELINE_ID, clamp_seam_min_mask
 from .fl2v_timeline import is_fl2v_prompt_reinforcement_enabled
 from .h3_motion_context import CONTINUITY_PIPELINE_ID, trim_context_prefix, trim_export_tail
@@ -57,6 +58,7 @@ GROUP_DERIVED_FP_KEYS = frozenset(
         "ref_video_start",
         "continuity_from_prev",
         "ref_image_size",
+        "audio_drive_timeline_v1",
         SOURCE_VIDEO_FP_KEY,
     }
 )
@@ -184,6 +186,7 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
         or seg.reference_video_meta.get("fileName")
         or ""
     ).strip()
+    drive_identity = drive_audio_identity(plan)
     payload = {
         "index": seg.index,
         "start": seg.start_frame,
@@ -193,6 +196,11 @@ def _segment_identity_fingerprint(seg: SegmentPlan, plan: DirectorPlan) -> dict[
         "task_key": seg.task_key,
         "fl2v_prompt_reinforcement_v1": is_fl2v_prompt_reinforcement_enabled(plan.raw),
         "explicit_reference_selection_v1": explicit_reference_only_enabled(plan.raw),
+        "audio_drive_v1": drive_identity,
+        "audio_drive_timeline_v1": (
+            [[item.index, item.start_frame, item.end_frame, bool(item.continuity_from_prev)] for item in plan.segments]
+            if drive_identity is not None else None
+        ),
         "width": plan.width,
         "height": plan.height,
         "frame_rate": float(getattr(plan, "frame_rate", 24) or 24),

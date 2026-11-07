@@ -76,6 +76,18 @@ Reference-audio slots can select an existing video or a local audio/video file. 
 
 `Export source to source_images` populates only the separate `source_images` output; it does not change `images`. Connect `source_images` to a preview or video compositor. Decode failures are reported explicitly and emit a neutral placeholder instead of generated frames.
 
+## Audio-Driven Video
+
+Select **Audio → Audio-driven** for `t2v`, `i2v`, `fl2v`, `r2v`, `v2v` or `rv2v`. **Choose driving audio** uploads or selects input audio, including extracted video soundtracks. Playback, removal and a fractional-second start offset are available.
+
+- Driving audio is separate from `<Audio N>` references, consumes no reference slot and is unaffected by reference filtering. Existing source-audio mode remains an export-time soundtrack replacement.
+- H3 Audio VAE encodes the soundtrack into target AV audio. Its noise mask is zero while existing video masks are preserved, allowing video sampling to attend to fixed target audio. Uses native H3 mask/conditioning-timestep support without modifying ComfyUI or requiring an external audio-lock plugin.
+- Requires 24fps, H3 Audio VAE and ComfyUI support for `audio_denoise_mask`. Missing/invalid audio, invalid offsets and unsupported versions fail explicitly. Refine / FaceRefine / SelfLift are currently rejected.
+- Supports standard and both staged policies. Audio is encoded during the encoding phase and retained on CPU; sampling slices it without reloading Audio VAE. Long timelines increase audio encoding memory use.
+- Adjacent executed segments follow actual export lengths, with continuity prefixes aligned to the driving audio. Previous-segment audio pinning is disabled; video continuity remains enabled. A first selected segment without prior handoff uses its timeline position plus the audio offset. Short soundtracks are padded with silence, not looped.
+- Outputs use the selected PCM soundtrack, not Audio VAE reconstruction; the video exporter still encodes container audio. Immediate latent saves and deferred decoding persist the soundtrack alongside latents, so standalone decoding needs neither the source file nor Audio VAE. Director packs include the audio; its identity, offset and timeline participate in cache invalidation.
+- Audio conditioning does not guarantee precise lip sync, lyrics or beat alignment. Interface regression checks do not replace real GPU generation/quality validation.
+
 ## Explicit Reference Selection
 
 The output bar's **Only pass referenced media** switch is enabled by default and saved with the workflow. Turn it off to restore legacy behavior: pass all supplied references and let the Director add tags for missing media types, without the new filtering or internal renumbering. Standalone Conditioning nodes expose `explicit_reference_only`; disabling it passes all references unchanged.

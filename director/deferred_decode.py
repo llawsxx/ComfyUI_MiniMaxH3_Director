@@ -187,7 +187,7 @@ class LatentSaveRun:
         self.manifest["segments"].append(record)
         self._publish()
         log.info("Segment #%d raw AV latent saved: %s", seg.timeline_index + 1, self.root / latent_name)
-        if self.manifest["audio_mode"] == AUDIO_MODE_SOURCE:
+        if self.manifest["audio_mode"] in {AUDIO_MODE_SOURCE, "drive"}:
             source = prepare_segment_audio_for_file_export(
                 self.plan, seg, audio_dict=None, frame_count=export_frames,
             )
@@ -251,6 +251,8 @@ def read_manifest(folder: str) -> tuple[Path, dict]:
         raise ValueError("任务中尚没有已保存的 latent。")
     seen = set()
     for record in records:
+        if data.get("audio_mode") == "drive" and not record.get("source_audio"):
+            raise ValueError("该驱动任务缺少已保存的驱动音频，不能静默输出无声视频。")
         index = int(record["timeline_index"])
         if index < 0 or index in seen:
             raise ValueError("Invalid or duplicate segment index in latent manifest.")
@@ -320,10 +322,10 @@ def decode_latent_run(
         frames = _decode_video(samples, video_vae, tiled=tiled, tile_size=tile_size, temporal_size=temporal_size)
         audio = _decode_audio(samples, audio_vae) if mode == AUDIO_MODE_GENERATE else None
         frames, audio = _crop_export(frames, audio, record, fps)
-        if mode == AUDIO_MODE_SOURCE and record.get("source_audio"):
+        if mode in {AUDIO_MODE_SOURCE, "drive"} and record.get("source_audio"):
             tensors = load_file(str(_child_path(root, record["source_audio"])), device="cpu")
             audio = {"waveform": tensors["waveform"], "sample_rate": int(record["source_sample_rate"])}
-        elif mode == AUDIO_MODE_SOURCE:
+        elif mode in {AUDIO_MODE_SOURCE, "drive"}:
             report.append(f"Segment #{index + 1}: 没有已保存的源音频，此段输出无声视频。")
         if audio is not None:
             audio = _pad_or_trim_audio_to_frames(

@@ -412,6 +412,9 @@ class MiniMaxH3Director:
             )
             return (*result, plan.latent_save_run_dir or "")
         finally:
+            if plan.audio_drive_session is not None:
+                plan.audio_drive_session.clear()
+                plan.audio_drive_session = None
             # Full source/reference PCM is execution-scoped.
             cache = getattr(plan, "audio_decode_cache", None)
             if isinstance(cache, dict):

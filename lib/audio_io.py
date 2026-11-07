@@ -375,9 +375,6 @@ def _load_full_audio(
         return None
     if not res.stdout:
         return None
-    parsed_ar, _ = _parse_ffmpeg_audio_info(res.stderr.decode(*_ENCODE_ARGS))
-    if parsed_ar > 0:
-        ar = parsed_ar
     audio = torch.frombuffer(bytearray(res.stdout), dtype=torch.float32)
     usable = (int(audio.numel()) // out_ac) * out_ac
     if usable < out_ac:

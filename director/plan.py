@@ -11,6 +11,7 @@ import os
 import re
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 import torch
@@ -293,6 +294,7 @@ class DirectorPlan:
     # Full source-video PCM, reused only during this one Director execution and
     # freed when the run ends (replaces the old never-cleared process cache).
     audio_decode_cache: dict = field(default_factory=dict, repr=False)
+    audio_drive_session: Any = field(default=None, repr=False)
     refine: dict | None = None
     selflift: dict | None = None
     semantic_bridge: dict | None = None

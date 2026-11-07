@@ -569,7 +569,7 @@ def finalize_director_outputs(
     audio_mode = resolve_audio_mode(plan)
     if getattr(plan, "deferred_decode_run_dir", None):
         audio_mode = "mute"
-    use_generated = audio_mode == AUDIO_MODE_GENERATE
+    use_generated = audio_mode in {AUDIO_MODE_GENERATE, "drive"}
     # Prefer caller-provided export lengths (post continuity trim); else match IMAGE batches.
     if segment_frame_counts is None and segment_audios and split_for_audio:
         segment_frame_counts = [int(s.shape[0]) for s in images_out]
