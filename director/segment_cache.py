@@ -24,6 +24,7 @@ from .h3_latent_continue import CONTINUE_PIPELINE_ID, clamp_seam_min_mask
 from .fl2v_timeline import is_fl2v_prompt_reinforcement_enabled
 from .h3_motion_context import CONTINUITY_PIPELINE_ID, trim_context_prefix, trim_export_tail
 from .plan import DirectorPlan, SegmentPlan, resolve_ref_image_size
+from .project import current_project_id
 
 log = logging.getLogger("ComfyUI-MiniMaxH3-Director.director.cache")
 
@@ -136,9 +137,17 @@ def _reject_source_stale(
     return True
 
 
+def _cache_directory(node_id: str) -> Path:
+    root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache"
+    project_id = current_project_id.get()
+    if project_id:
+        root = root / "projects" / project_id
+    return root / str(node_id)
+
+
 def _cache_root(node_id: str) -> Path | None:
     try:
-        root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+        root = _cache_directory(node_id)
         root.mkdir(parents=True, exist_ok=True)
         return root
     except OSError as exc:
@@ -1053,7 +1062,7 @@ def prune_segment_cache(node_id: str | None, valid_indices) -> None:
     if not node_id:
         return
     try:
-        root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+        root = _cache_directory(node_id)
         if not root.is_dir():
             return
         valid = {int(i) for i in valid_indices}
@@ -1083,7 +1092,7 @@ def first_pass_cache_disk_signature(node_id: str | None) -> str:
     """
     if not node_id:
         return ""
-    root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+    root = _cache_directory(node_id)
     if not root.is_dir():
         return ""
     parts: list[str] = []
@@ -1314,7 +1323,7 @@ def _inspect_external_group_cache(
     if not node_id:
         return result
 
-    root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+    root = _cache_directory(node_id)
     result["final_cached_count"] = _count_final_segment_files(root)
 
     # Plan-level knobs only. The group-derived keys cannot be rebuilt without the
@@ -1521,7 +1530,7 @@ def inspect_first_pass_cache(
     if not node_id:
         return result
 
-    root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+    root = _cache_directory(node_id)
     all_segments = list(getattr(plan, "segments", None) or [])
     run_indices = getattr(plan, "run_indices", None)
     selected_set = frozenset(run_indices) if run_indices is not None else None
@@ -1659,7 +1668,7 @@ def clear_segment_cache(node_id: str | None, kind: str = "final") -> int:
         return 0
     if kind not in {"first_pass", "final", "all"}:
         raise ValueError("kind must be first_pass, final or all")
-    root = Path(folder_paths.get_output_directory()) / "minimax_seg_cache" / str(node_id)
+    root = _cache_directory(node_id)
     if not root.is_dir():
         return 0
     try:

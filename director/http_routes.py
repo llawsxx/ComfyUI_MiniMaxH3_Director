@@ -533,6 +533,7 @@ async def minimax_first_pass_cache_status(request):
         from .external_groups import external_witness_from_timeline_data
         from .plan import build_director_plan
         from .segment_cache import inspect_first_pass_cache
+        from .project import project_scope
 
         plan = build_director_plan(
             str(timeline_data),
@@ -587,9 +588,10 @@ async def minimax_first_pass_cache_status(request):
         witness = external_witness_from_timeline_data(timeline_data)
         if witness:
             plan.external_groups_witness = witness
-        return web.json_response(
-            inspect_first_pass_cache(node_id, plan, external_groups=witness)
-        )
+        with project_scope(timeline_data):
+            return web.json_response(
+                inspect_first_pass_cache(node_id, plan, external_groups=witness)
+            )
     except Exception as exc:
         log.warning("MiniMax H3 Director first-pass cache inspection failed: %s", exc)
         return web.json_response(
@@ -615,9 +617,13 @@ async def minimax_clear_segment_cache(request):
 
     try:
         from .segment_cache import clear_segment_cache
+        from .project import project_scope
 
-        removed = clear_segment_cache(node_id, kind=kind)
+        with project_scope({"projectId": body.get("project_id")}):
+            removed = clear_segment_cache(node_id, kind=kind)
         return web.json_response({"removed": removed, "kind": kind})
+    except ValueError as exc:
+        return web.Response(status=400, text=str(exc))
     except Exception as exc:
         log.warning("MiniMax H3 Director clear segment cache failed: %s", exc)
         return web.Response(status=500, text=str(exc))

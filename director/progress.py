@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from .project import current_project_id
+
 log = logging.getLogger("ComfyUI-MiniMaxH3-Director.director")
 
 DIRECTOR_PHASES = (
@@ -102,6 +104,7 @@ def report_director_progress(
 
     payload = {
         "node_id": str(node_id),
+        "project_id": current_project_id.get(),
         "segment": segment_index + 1,
         "segment_total": segment_total,
         "timeline_segment": timeline_seg,
@@ -156,6 +159,7 @@ def report_director_segment_preview(
         return
     payload = {
         "node_id": str(node_id),
+        "project_id": current_project_id.get(),
         "segment_index": segment_index,
         "image_b64": image_b64,
         "width": width,
@@ -184,6 +188,23 @@ def report_director_segment_preview(
             srv.send_sync("minimax_director_preview", payload, srv.client_id)
     except Exception as exc:
         log.debug("Director preview send skipped: %s", exc)
+
+
+def report_director_error(node_id: str | None, message: str) -> None:
+    if not node_id:
+        return
+    try:
+        from server import PromptServer
+
+        srv = PromptServer.instance
+        if srv:
+            srv.send_sync("minimax_director_error", {
+                "node_id": str(node_id),
+                "project_id": current_project_id.get(),
+                "exception_message": message,
+            }, srv.client_id)
+    except Exception as exc:
+        log.debug("Director error send skipped: %s", exc)
 
 
 def report_director_finish(node_id: str | None, segment_total: int) -> None:

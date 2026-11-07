@@ -360,7 +360,7 @@ function graphNodes() {
 
 function connectedDirector(refineNode) {
     const graph = refineNode?.graph ?? app.graph ?? app.canvas?.graph;
-    for (const candidate of graphNodes()) {
+    for (const candidate of graph?._nodes ?? graph?.nodes ?? []) {
         const cls = candidate?.comfyClass || candidate?.type || "";
         if (!DIRECTOR_CLASSES.has(cls)) continue;
         const input = candidate.inputs?.find((item) => item?.name === "refine");
@@ -800,10 +800,15 @@ async function clearSegmentCache(node) {
     }
     renderCacheStatus(node, "正在清空缓存…", "muted");
     try {
+        const payload = cacheStatusPayload(director, node);
+        const projectId = JSON.parse(payload.timeline_data || "{}").projectId || "";
+        if (!/^[a-f0-9]{32}$/.test(projectId)) {
+            throw new Error("未找到有效的项目标识，请重新打开并保存工作流后再清理缓存。");
+        }
         const response = await api.fetchApi("/minimax/director/clear_segment_cache", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ node_id: String(director.id), kind: "all" }),
+            body: JSON.stringify({ node_id: String(director.id), project_id: projectId, kind: "all" }),
         });
         const data = await response.json();
         if (!response.ok || data?.error) {

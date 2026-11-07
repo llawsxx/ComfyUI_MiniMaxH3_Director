@@ -76,6 +76,13 @@ Reference-audio slots can select an existing video or a local audio/video file. 
 
 `Export source to source_images` populates only the separate `source_images` output; it does not change `images`. Connect `source_images` to a preview or video compositor. Decode failures are reported explicitly and emit a neutral placeholder instead of generated frames.
 
+## Workflow and Project Isolation
+
+- Each Director gets a project identity saved in its workflow's `timeline_data`. Reopening the workflow preserves it. Prompts, segments and selected media remain node-local.
+- Caches use `output/minimax_seg_cache/projects/<project-id>/<node-id>/`. Inspection, deletion, continuity and first-pass confirmation use the same isolated directory. Progress, live previews and execution errors also check the project identity, so switching workflows does not update an unrelated node with the same ID.
+- New Directors, cloned nodes and imported media packs get new identities. **Copying an entire workflow file or using Save As preserves its identity**. To use the copy as a different project, click **Separate project** and save the workflow. This keeps segments, prompts and media without deleting the original project's cache.
+- Legacy workflows receive an identity when opened; save them once. Old node-ID-only caches are neither migrated nor deleted automatically, to avoid mistaking another project's data for this one. The first run rebuilds the cache. The input media library remains shared; video and latent exports retain their existing task directories.
+
 ## Audio-Driven Video
 
 Select **Audio → Audio-driven** for `t2v`, `i2v`, `fl2v`, `r2v`, `v2v` or `rv2v`. **Choose driving audio** uploads or selects input audio, including extracted video soundtracks. Playback, removal and a fractional-second start offset are available.

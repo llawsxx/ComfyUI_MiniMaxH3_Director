@@ -1,6 +1,13 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import {
+    directorEventMatches,
+    directorProjectId,
+    newDirectorProjectId,
+    normalizeDirectorProjectId,
+    setDirectorProjectId,
+} from "./minimax_project.js";
+import {
     CUSTOM_ASPECT_RATIO,
     DEFAULT_ASPECT_RATIO,
     DEFAULT_MEGAPIXELS,
@@ -2066,6 +2073,7 @@ function parseTimeline(raw, totalFrames, fps) {
     const total = totalFrames || 124;
     const base = {
         version: 4,
+        projectId: newDirectorProjectId(),
         editMode: "global",
         totalFrames: total,
         frameRate: coerceTimelineFps(fps || 24),
@@ -2113,6 +2121,8 @@ function parseTimeline(raw, totalFrames, fps) {
     if (!raw?.trim()) return base;
     try {
         const data = JSON.parse(raw);
+        data.projectId = normalizeDirectorProjectId(data.projectId ?? data.project_id) || base.projectId;
+        delete data.project_id;
         data.version = data.version || 4;
         data.editMode = data.editMode || "global";
         data.frameRate = coerceTimelineFps(data.frameRate ?? fps ?? 24);
@@ -2792,6 +2802,7 @@ class MiniMaxH3DirectorEditor {
     }
 
     buildTimelinePayload() {
+        this.ensureProjectIdentity();
         if (this.isFl2vMode()) {
             const fl = buildFl2vPayloadFields(this);
             const outMode = this.timeline.output?.mode || "long_edge";
@@ -2971,6 +2982,28 @@ class MiniMaxH3DirectorEditor {
         };
     }
 
+    ensureProjectIdentity() {
+        let projectId = normalizeDirectorProjectId(this.timeline.projectId) || newDirectorProjectId();
+        const graph = this.node.graph;
+        const duplicate = (graph?._nodes ?? graph?.nodes ?? []).some((node) =>
+            node !== this.node && isMiniMaxH3DirectorNode(node) && directorProjectId(node) === projectId,
+        );
+        if (duplicate) projectId = newDirectorProjectId();
+        this.timeline.projectId = projectId;
+        return projectId;
+    }
+
+    forkProject() {
+        if (!window.confirm(t("project.forkConfirm"))) return;
+        this.node.graph?.beforeChange?.();
+        this.flushTimelineSync();
+        setDirectorProjectId(this.node, newDirectorProjectId(), this.timelineWidget?.value);
+        this.clearRunProgress();
+        this.clearLiveSamplePreview?.();
+        this.flushTimelineSync();
+        this.node.graph?.afterChange?.();
+    }
+
     flushTimelineSync() {
         clearTimeout(this._syncTimer);
         this._syncTimer = null;
@@ -3024,6 +3057,7 @@ class MiniMaxH3DirectorEditor {
         toolbarWrap.innerHTML = `
             <div class="bd-toolbar">
                 <div class="bd-actions">
+                    <button type="button" class="bd-btn" data-a="fork-project" data-i18n="project.fork" data-i18n-title="project.forkHint">独立项目</button>
                     <button type="button" class="bd-btn bd-btn-primary hidden" data-a="r2v-add-group" data-i18n="toolbar.addRefGroup" data-i18n-title="tooltip.addRefGroup">添加素材组</button>
                     <button type="button" class="bd-btn bd-btn-primary" data-a="video" data-i18n="toolbar.uploadVideo">上传视频</button>
                     <button type="button" class="bd-btn" data-a="video-existing" data-i18n="mediaPicker.pickExistingVideo" data-i18n-title="mediaPicker.pickExistingHint">选已有视频</button>
@@ -3649,6 +3683,7 @@ class MiniMaxH3DirectorEditor {
     }
 
     bindEvents() {
+        this.root.querySelector('[data-a="fork-project"]')?.addEventListener("click", () => this.forkProject());
         const bind = (sel, fn) => {
             const el = this.root.querySelector(sel);
             if (!el) return;
@@ -4285,6 +4320,7 @@ class MiniMaxH3DirectorEditor {
             if (this.refMaxWidget && (data.refMaxSize || out.longEdge)) {
                 this.refMaxWidget.value = data.refMaxSize || out.longEdge;
             }
+            data.projectId = newDirectorProjectId();
             if (this.timelineWidget) this.timelineWidget.value = JSON.stringify(data);
             const initTotal = Math.max(0, parseInt(this.totalFramesWidget?.value || data.totalFrames || 124, 10));
             const initFps = coerceTimelineFps(this.frameRateWidget?.value || data.frameRate || 24);
@@ -12788,11 +12824,10 @@ class MiniMaxH3DirectorEditor {
     }
 }
 
-function findDirectorNode(nodeId) {
-    const id = String(nodeId);
+function findDirectorNode(detail) {
     const graph = app.graph ?? app.canvas?.graph;
     for (const node of graph?._nodes ?? graph?.nodes ?? []) {
-        if (String(node.id) === id) return node;
+        if (isMiniMaxH3DirectorNode(node) && directorEventMatches(node, detail)) return node;
     }
     return null;
 }
@@ -13159,7 +13194,7 @@ function collectAutogrowSlotRefs(graph, node, prefix, resolvePath, toRef, patchS
 }
 
 function readExternalGroupSpec(node, graph = null) {
-    const g = graph || app.graph || app.canvas?.graph;
+    const g = graph || node?.graph || app.graph || app.canvas?.graph;
     const durRaw = Number(nodeWidgetValue(node, "duration_sec"));
     const sizeRaw = nodeWidgetValue(node, "ref_image_size")
         ?? nodeWidgetValue(node, "refImageSize");
@@ -13353,7 +13388,7 @@ function collectExternalGroupSpecs(editor) {
             ? "r2v_groups"
             : null;
     if (!port) return null;
-    const graph = app.graph ?? app.canvas?.graph;
+    const graph = editor?.node?.graph ?? app.graph ?? app.canvas?.graph;
     const inp = editor?.node?.inputs?.find((i) => i?.name === port);
     if (!graph || inp?.link == null) return null;
     const specs = expandExternalGroupLink(graph, inp.link, 0, "specs");
@@ -13367,7 +13402,7 @@ function collectExternalGroupNodes(editor) {
             ? "r2v_groups"
             : null;
     if (!port) return null;
-    const graph = app.graph ?? app.canvas?.graph;
+    const graph = editor?.node?.graph ?? app.graph ?? app.canvas?.graph;
     const inp = editor?.node?.inputs?.find((i) => i?.name === port);
     if (!graph || inp?.link == null) return null;
     const nodes = expandExternalGroupLink(graph, inp.link, 0, "nodes");
@@ -13392,7 +13427,7 @@ function firstConnectedGroupPort(node) {
 function collectExternalGroupChain(node) {
     const port = firstConnectedGroupPort(node);
     if (!port) return null;
-    const graph = app.graph ?? app.canvas?.graph;
+    const graph = node?.graph ?? app.graph ?? app.canvas?.graph;
     const inp = (node?.inputs || []).find((i) => String(i?.name) === port);
     if (!graph || inp?.link == null) return null;
     const specs = expandExternalGroupLink(graph, inp.link, 0, "specs");
@@ -13455,7 +13490,7 @@ function stripDeprecatedDirectorOutputs(node) {
 /** Reorder legacy output links after slot layout changes. */
 function migrateDirectorOutputLinks(node) {
     if (!isMiniMaxH3DirectorNode(node)) return;
-    const graph = app.graph ?? app.canvas?.graph;
+    const graph = node?.graph ?? app.graph ?? app.canvas?.graph;
     const links = graph?.links;
     if (!links?.length) return;
     const outputs = node.outputs || [];
@@ -13516,11 +13551,29 @@ app.registerExtension({
         }
 
         api.addEventListener("minimax_director_progress", ({ detail }) => {
-            findDirectorNode(detail?.node_id)?._minimaxEditor?.setRunProgress?.(detail);
+            const editor = findDirectorNode(detail)?._minimaxEditor;
+            if (!editor) return;
+            if (detail.phase === "plan") {
+                editor.clearLiveSamplePreview?.();
+                if (editor.isImageBatch?.()) {
+                    for (const segment of editor.timeline.segments || []) {
+                        segment.previewB64 = "";
+                        segment.previewFrames = [];
+                        segment.previewMime = "";
+                        segment.previewLive = false;
+                        segment.previewStep = null;
+                        segment.previewTotalSteps = null;
+                        segment.previewAudioB64 = "";
+                        segment.previewAudioMime = "";
+                    }
+                    editor.renderImageBatchGroups?.();
+                }
+            }
+            editor.setRunProgress?.(detail);
         });
 
         api.addEventListener("minimax_director_preview", ({ detail }) => {
-            const editor = findDirectorNode(detail?.node_id)?._minimaxEditor;
+            const editor = findDirectorNode(detail)?._minimaxEditor;
             if (!editor) return;
             if (editor.isImageBatch?.()) {
                 setImageBatchPreview(
@@ -13543,47 +13596,8 @@ app.registerExtension({
             editor.setLiveSamplePreview?.(detail);
         });
 
-        api.addEventListener("executing", ({ detail }) => {
-            if (detail == null) return;
+        api.addEventListener("minimax_director_error", ({ detail }) => {
             const node = findDirectorNode(detail);
-            const editor = node?._minimaxEditor;
-            if (!editor) return;
-            editor.flushTimelineSync?.();
-            editor.clearLiveSamplePreview?.();
-            if (editor.isImageBatch?.()) {
-                for (const seg of editor.timeline.segments || []) {
-                    seg.previewB64 = "";
-                    seg.previewFrames = [];
-                    seg.previewMime = "";
-                    seg.previewLive = false;
-                    seg.previewStep = null;
-                    seg.previewTotalSteps = null;
-                    seg.previewAudioB64 = "";
-                    seg.previewAudioMime = "";
-                }
-                editor.renderImageBatchGroups?.();
-            }
-            const segTotal = editor.getRunProgressSegmentTotal?.() ?? (editor.timeline?.segments?.length || 1);
-            const timelineTotal = editor.timeline?.segments?.length || segTotal;
-            editor.setRunProgress({
-                node_id: detail,
-                segment: 1,
-                segment_total: segTotal,
-                timeline_segment: 1,
-                timeline_segment_total: timelineTotal,
-                partial_run: editor.isRunSelectEnabled?.() && segTotal < timelineTotal,
-                phase: "plan",
-                phase_label: t("executing.parseTimeline"),
-                phase_value: 0,
-                phase_max: 1,
-                overall_value: 0,
-                overall_max: Math.max(1, segTotal * 6),
-                remaining_segments: Math.max(0, segTotal - 1),
-            });
-        });
-
-        api.addEventListener("execution_error", ({ detail }) => {
-            const node = findDirectorNode(detail?.node_id);
             if (node?._minimaxEditor) {
                 node._minimaxEditor.setRunError(detail?.exception_message || t("executing.error"));
             }
@@ -13674,6 +13688,17 @@ app.registerExtension({
         if (!isDirectorNodeDef(nodeType, nodeData)) return;
         if (nodeType.prototype._minimaxDirectorPatched) return;
         nodeType.prototype._minimaxDirectorPatched = true;
+
+        const clone = nodeType.prototype.clone;
+        if (typeof clone === "function") {
+            nodeType.prototype.clone = function (...args) {
+                this._minimaxEditor?.flushTimelineSync?.();
+                const timelineData = widgetByName(this, "timeline_data")?.value;
+                const cloned = clone.apply(this, args);
+                if (cloned) setDirectorProjectId(cloned, newDirectorProjectId(), timelineData);
+                return cloned;
+            };
+        }
 
         const onCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {

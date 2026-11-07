@@ -5,6 +5,7 @@ from __future__ import annotations
 import comfy.samplers
 
 from ..director.executor_core import execute_director_plan_core
+from ..director.project import project_scope, project_scoped
 from .director_common import (
     finalize_director_outputs,
     prepare_director_plan,
@@ -259,10 +260,10 @@ class MiniMaxH3Director:
         # Do not return NaN: that would re-run every Director queue even when
         # confirm_first_pass is off. Linked Refine is None here, so fingerprint
         # the .pre cache files that only the confirmation hold writes.
-        del kwargs
         from ..director.segment_cache import first_pass_cache_disk_signature
 
-        return first_pass_cache_disk_signature(unique_id)
+        with project_scope(kwargs.get("timeline_data")):
+            return first_pass_cache_disk_signature(unique_id)
 
     RETURN_TYPES = ("IMAGE", "AUDIO", "FLOAT", "INT", "IMAGE", "STRING", "IMAGE", "IMAGE", "STRING")
     RETURN_NAMES = (
@@ -297,6 +298,7 @@ class MiniMaxH3Director:
         "Defaults: 0.4MP 16:9 (864×480), 5s / 124 frames @ 24 fps."
     )
 
+    @project_scoped
     def execute(
         self,
         model,

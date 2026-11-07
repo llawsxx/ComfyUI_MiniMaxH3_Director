@@ -3,6 +3,9 @@
 export const LOCALE_STORAGE_KEY = "mmx_director_ui_locale";
 
 const ZH = {
+    "project.fork": "独立项目",
+    "project.forkHint": "复制或另存工作流后，点此使用独立的项目缓存和运行状态。保留分段、提示词及素材，不删除旧缓存。",
+    "project.forkConfirm": "为当前导演台创建独立项目？\n分段、提示词和素材保持不变；从空缓存开始，不删除原项目缓存。请保存工作流以保留新的项目标识。",
     "guides.title": "引导帧",
     "guides.commonTitle": "公共引导帧",
     "guides.add": "+ 添加引导帧",
@@ -559,6 +562,9 @@ const ZH = {
 };
 
 const EN = {
+    "project.fork": "Separate project",
+    "project.forkHint": "After copying or saving a workflow as a new project, create an independent cache and run identity. Keeps segments, prompts and media; does not delete old caches.",
+    "project.forkConfirm": "Create an independent project for this Director?\nSegments, prompts and media stay unchanged. Starts with an empty cache without deleting the old project cache. Save the workflow to retain the new identity.",
     "guides.title": "Guide frames",
     "guides.commonTitle": "Shared guide frames",
     "guides.add": "+ Add guide frame",
